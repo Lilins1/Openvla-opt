@@ -64,6 +64,8 @@ from prismatic.vla.datasets.rlds.utils.data_utils import save_dataset_statistics
 # Sane Defaults
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
+forCount = 0
+forSum = 0
 
 @dataclass
 class FinetuneConfig:
@@ -388,6 +390,10 @@ def run_forward_pass(
             predicted_actions = action_head.module.predict_action(actions_hidden_states)
             # Get full L1 loss
             loss = torch.nn.L1Loss()(ground_truth_actions, predicted_actions)
+
+
+            # print(f"ground_truth_actions: {ground_truth_actions}")
+            # print(f"predicted_actions: {predicted_actions}")
 
         if use_diffusion:
             # Predict noise
@@ -1028,6 +1034,9 @@ def finetune(cfg: FinetuneConfig) -> None:
         "next_actions_l1_loss": deque(maxlen=cfg.grad_accumulation_steps),
     }
 
+    ForCount = 0
+    normalized_lossAcc = 0
+
     # Start training
     with tqdm.tqdm(total=cfg.max_steps, leave=False) as progress:
         vla.train()
@@ -1054,6 +1063,13 @@ def finetune(cfg: FinetuneConfig) -> None:
 
             # Normalize loss to account for gradient accumulation
             normalized_loss = loss / cfg.grad_accumulation_steps
+
+            ForCount += 1
+            normalized_lossAcc += loss
+            if ForCount % 100 == 0:
+                print(f"normalized_lossAvg: {normalized_lossAcc/ForCount}")
+                normalized_lossAcc = 0
+                ForCount = 0
 
             # Backward pass
             normalized_loss.backward()

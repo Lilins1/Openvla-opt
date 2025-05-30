@@ -136,6 +136,21 @@ class PaddedCollatorForActionPrediction:
         actions = [torch.from_numpy(np.copy(instance["actions"])) for instance in instances]
         actions = torch.stack(actions)
 
+        if "language_instruction" in instances[0]:
+            language_instructions = [instance["language_instruction"] for instance in instances]
+        else:
+            language_instructions = None
+
+        if "is_terminal" in instances[0]:
+            is_terminal = [instance["is_terminal"] for instance in instances]
+        else:
+            is_terminal = None
+            
+        if "is_last" in instances[0]:
+            is_last = [instance["is_last"] for instance in instances]
+        else:
+            is_last = None
+
         # Stack proprio
         if "proprio" in instances[0]:
             proprio = [instance["proprio"] for instance in instances]
@@ -150,6 +165,9 @@ class PaddedCollatorForActionPrediction:
             attention_mask=attention_mask,
             labels=labels,
             actions=actions,
+            is_terminal=is_terminal,                     # 新增
+            is_last=is_last,                             # 新增
+            language_instructions=language_instructions, # 新增
         )
         if dataset_names is not None:
             output["dataset_names"] = dataset_names

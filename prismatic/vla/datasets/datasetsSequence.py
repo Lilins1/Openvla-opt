@@ -40,6 +40,17 @@ class RLDSBatchTransform:
         lang = rlds_batch["task"]["language_instruction"].decode().lower()
         actions = rlds_batch["action"]
 
+        # print("rlds_batch[task] keys:", rlds_batch["task"].keys())  # Debug: 打印所有键
+
+        # ——— 新增：提取 is_terminal 和 is_last ———
+        # 这里假定 rlds_batch["step"] 是一个长度 >= NUM_ACTIONS_CHUNK 的列表/ndarray
+        # 并且每一步都有对应的 is_terminal / is_last
+        # is_terminal = torch.tensor(rlds_batch["task"]["is_terminal"], dtype=torch.bool)
+        # is_last = torch.tensor(rlds_batch["task"]["is_last"], dtype=torch.bool)
+        # 也保留原始的任务描述文本
+        language_instruction = rlds_batch["task"]["language_instruction"].decode()
+        # print(f'language_instruction: {language_instruction}')
+
 
         # Construct Chat-based Prompt =>> Input is default query + language instruction, output are the action tokens
         prompt_builder = self.prompt_builder_fn("openvla")
@@ -74,7 +85,8 @@ class RLDSBatchTransform:
         if not self.predict_stop_token:
             labels[-1] = IGNORE_INDEX
 
-        return_dict = dict(pixel_values=pixel_values, input_ids=input_ids, labels=labels, dataset_name=dataset_name, actions=actions,)
+        return_dict = dict(pixel_values=pixel_values, input_ids=input_ids, labels=labels, dataset_name=dataset_name, actions=actions,
+                           language_instruction=language_instruction, )
 
         # Add additional inputs
         if self.use_wrist_image:
@@ -115,7 +127,7 @@ class RLDSDataset(IterableDataset):
 
         # fmt: off
         if "aloha" in self.data_mix:
-            load_camera_views = ("primary", "left_wrist", "right_wrist")
+            load_camera_views = ("primary", "left_wrist", "right_wrist") #Use 3 Povs
         else:
             load_camera_views = ("primary", "wrist")
 
@@ -142,7 +154,7 @@ class RLDSDataset(IterableDataset):
             dataset_kwargs_list=per_dataset_kwargs,
             shuffle_buffer_size=shuffle_buffer_size,
             sample_weights=weights,
-            balance_weights=True,
+            balance_weights=False,
             traj_transform_threads=len(mixture_spec),
             traj_read_threads=len(mixture_spec),
             train=train,
@@ -174,6 +186,7 @@ class RLDSDataset(IterableDataset):
 
     def __iter__(self) -> Dict[str, Any]:
         for rlds_batch in self.dataset.as_numpy_iterator():
+            # print("Batch keys:", rlds_batch.keys())  # Debug: 打印所有键
             yield self.batch_transform(rlds_batch)
 
     def __len__(self) -> int:

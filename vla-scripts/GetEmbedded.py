@@ -60,7 +60,7 @@ from prismatic.vla.constants import (
     NUM_ACTIONS_CHUNK,
     PROPRIO_DIM,
 )
-from prismatic.vla.datasets import RLDSBatchTransform, RLDSDataset
+from prismatic.vla.datasets.datasetsSequence import RLDSBatchTransform, RLDSDataset
 from prismatic.vla.datasets.rlds.utils.data_utils import save_dataset_statistics
 
 # Sane Defaults
@@ -268,155 +268,6 @@ def init_module(
     return wrap_ddp(module, device_id, find_unused_params)
 
 
-def run_forward_pass(
-    vla,
-    action_head,
-    noisy_action_projector,
-    proprio_projector,
-    batch,
-    action_tokenizer,
-    device_id,
-    use_l1_regression,
-    use_diffusion,
-    use_proprio,
-    use_film,
-    num_patches,
-    compute_diffusion_l1=False,
-    num_diffusion_steps=None,
-) -> Tuple[torch.Tensor, Dict[str, float]]:
-    """
-    Compute model forward pass and metrics for both training and validation.
-
-    Args:
-        vla (OpenVLAForActionPrediction): Vision-language-action policy.
-        action_head (nn.Module): Action head module.
-        noisy_action_projector (nn.Module): Noisy action projector module (only used for diffusion).
-        proprio_projector (nn.Module): Proprioceptive state projector module.
-        batch (dict): Input batch.
-        action_tokenizer (ActionTokenizer): Action tokenizer.
-        device_id (str): Device ID.
-        use_l1_regression (bool): Whether to use L1 regression.
-        use_diffusion (bool): Whether to use diffusion.
-        use_proprio (bool): Whether to use proprioceptive state as input.
-        use_film (bool): Whether to use FiLM for better language following.
-        num_patches (int): Number of vision patches.
-        compute_diffusion_l1 (bool): Whether to sample actions and compute L1 loss for diffusion (do this once every
-                                    diffusion_sample_freq steps during training; do it every batch for validation)
-        num_diffusion_steps (int): Number of diffusion steps (only used for diffusion).
-
-    Returns:
-        tuple: (loss, metrics_dict)
-            loss: The loss tensor with gradient for backpropagation.
-            metrics_dict: Dictionary of computed metrics (detached values for logging).
-    """
-    metrics = {}
-
-    # Get ground-truth action labels
-    ground_truth_actions = batch["actions"].to(device_id).to(torch.bfloat16)
-
-    # [Only for diffusion] Sample noisy actions used as input for noise predictor network
-    if use_diffusion:
-        noisy_dict = action_head.module.sample_noisy_actions(ground_truth_actions)
-        noise, noisy_actions, diffusion_timestep_embeddings = (
-            noisy_dict["noise"],
-            noisy_dict["noisy_actions"],
-            noisy_dict["diffusion_timestep_embeddings"],
-        )
-    else:
-        noise, noisy_actions, diffusion_timestep_embeddings = None, None, None
-
-    # VLA forward pass
-    with torch.autocast("cuda", dtype=torch.bfloat16):
-        output: CausalLMOutputWithPast = vla(
-            input_ids=batch["input_ids"].to(device_id),
-            attention_mask=batch["attention_mask"].to(device_id),
-            pixel_values=batch["pixel_values"].to(torch.bfloat16).to(device_id),
-            labels=batch["labels"],
-            output_hidden_states=True,
-            proprio=batch["proprio"] if use_proprio else None,
-            proprio_projector=proprio_projector if use_proprio else None,
-            noisy_actions=noisy_actions if use_diffusion else None,
-            noisy_action_projector=noisy_action_projector if use_diffusion else None,
-            diffusion_timestep_embeddings=diffusion_timestep_embeddings if use_diffusion else None,
-            use_film=use_film,
-        )
-
-    # Get action masks needed for logging
-    ground_truth_token_ids = batch["labels"][:, 1:].to(device_id)
-    current_action_mask = get_current_action_mask(ground_truth_token_ids)
-    next_actions_mask = get_next_actions_mask(ground_truth_token_ids)
-
-    # Compute metrics for discrete action representation (next-token prediction)
-    if not (use_l1_regression or use_diffusion):
-        loss = output.loss
-        predicted_token_ids = output.logits[:, num_patches:-1].argmax(dim=2)
-        curr_action_accuracy = compute_token_accuracy(
-            predicted_token_ids, ground_truth_token_ids, mask=current_action_mask
-        )
-        curr_action_l1_loss = compute_actions_l1_loss(
-            action_tokenizer, predicted_token_ids, ground_truth_token_ids, mask=current_action_mask
-        )
-        next_actions_accuracy = compute_token_accuracy(
-            predicted_token_ids, ground_truth_token_ids, mask=next_actions_mask
-        )
-        next_actions_l1_loss = compute_actions_l1_loss(
-            action_tokenizer, predicted_token_ids, ground_truth_token_ids, mask=next_actions_mask
-        )
-        metrics.update(
-            {
-                "loss_value": loss.item(),  # Detached value for logging
-                "curr_action_accuracy": curr_action_accuracy.item(),
-                "curr_action_l1_loss": curr_action_l1_loss.item(),
-                "next_actions_accuracy": next_actions_accuracy.item(),
-                "next_actions_l1_loss": next_actions_l1_loss.item(),
-            }
-        )
-    # Compute metrics for continuous action representations (L1 regression | diffusion)
-    else:
-        # Get last layer hidden states
-        last_hidden_states = output.hidden_states[-1]  # (B, seq_len, D)
-        # Get hidden states for text portion of prompt+response (after the vision patches)
-        text_hidden_states = last_hidden_states[:, num_patches:-1]
-        # Get hidden states for action portion of response
-        batch_size = batch["input_ids"].shape[0]
-        actions_hidden_states = (
-            text_hidden_states[current_action_mask | next_actions_mask]
-            .reshape(batch_size, NUM_ACTIONS_CHUNK * ACTION_DIM, -1)
-            .to(torch.bfloat16)
-        )  # (B, act_chunk_len, D)
-
-        if use_l1_regression:
-            # Predict action
-            predicted_actions = action_head.module.predict_action(actions_hidden_states)
-            # Get full L1 loss
-            loss = torch.nn.L1Loss()(ground_truth_actions, predicted_actions)
-
-        metrics.update(
-            {
-                "loss_value": loss.item(),  # Detached value for logging
-            }
-        )
-
-        # Get detailed L1 losses for logging
-        should_log_l1_loss = not use_diffusion or (use_diffusion and compute_diffusion_l1)
-        if should_log_l1_loss:
-            ground_truth_curr_action = ground_truth_actions[:, 0]
-            predicted_curr_action = predicted_actions[:, 0]
-            ground_truth_next_actions = ground_truth_actions[:, 1:]
-            predicted_next_actions = predicted_actions[:, 1:]
-            curr_action_l1_loss = torch.nn.L1Loss()(ground_truth_curr_action, predicted_curr_action)
-            next_actions_l1_loss = torch.nn.L1Loss()(ground_truth_next_actions, predicted_next_actions)
-            metrics.update(
-                {
-                    "curr_action_l1_loss": curr_action_l1_loss.item(),
-                    "next_actions_l1_loss": next_actions_l1_loss.item(),
-                }
-            )
-
-    # Return both the loss tensor (with gradients) and the metrics dictionary (with detached values)
-    return loss, metrics
-
-
 
 def compute_smoothened_metrics(metrics_deques) -> dict:
     """
@@ -576,8 +427,11 @@ def get_forward_action(
             .reshape(batch_size, NUM_ACTIONS_CHUNK * ACTION_DIM, -1)
             .to(torch.bfloat16)
         )  # (B, act_chunk_len, D)
+        if use_l1_regression:
+            # Predict action
+            predicted_actions = action_head.module.predict_action(actions_hidden_states)
 
-    return actions_hidden_states, ground_truth_actions
+    return actions_hidden_states, ground_truth_actions, predicted_actions
 
 @draccus.wrap()
 def GetEmbedded(cfg: FinetuneConfig) -> None:
@@ -809,7 +663,7 @@ def GetEmbedded(cfg: FinetuneConfig) -> None:
         cfg.dataset_name,
         batch_transform,
         resize_resolution=tuple(vla.module.config.image_sizes),
-        shuffle_buffer_size=cfg.shuffle_buffer_size,
+        shuffle_buffer_size=1,
         image_aug=cfg.image_aug,
     )
     if cfg.use_val_set:
@@ -834,18 +688,19 @@ def GetEmbedded(cfg: FinetuneConfig) -> None:
     dataloader = DataLoader(
         train_dataset,
         batch_size=cfg.batch_size,
-        sampler=None,
         collate_fn=collator,
         num_workers=0,  # Important: Set to 0 if using RLDS, which uses its own parallelism
+        shuffle=False,  # 保持顺序
     )
     if cfg.use_val_set:
+        print("cfg.use_val_set: true")
         val_batch_size = cfg.batch_size
         val_dataloader = DataLoader(
             val_dataset,
             batch_size=val_batch_size,
-            sampler=None,
             collate_fn=collator,
             num_workers=0,  # Important: Set to 0 if using RLDS, which uses its own parallelism
+            shuffle=False,  # 保持顺序
         )
 
     # Deque to store recent train metrics (used for computing smoothened metrics for gradient accumulation)
@@ -866,13 +721,48 @@ def GetEmbedded(cfg: FinetuneConfig) -> None:
         optimizer.zero_grad()
 
         # 在真正开始训练前，初始化两个列表
-        sample_preds: List[np.ndarray] = []
+        sample_embedded: List[np.ndarray] = []
         sample_gts:   List[np.ndarray] = []
-        
+        sample_mlppreds:   List[np.ndarray] = []
+
+        lang_flag = ""
         for batch_idx, batch in enumerate(dataloader):
-            # Compute training metrics and loss
+            if lang_flag != batch["language_instructions"]:
+                current_instructs = lang_flag
+                lang_flag = batch["language_instructions"]
+                print(f'language_instructions: {batch["language_instructions"]}')
+                new_file = True
+            
+                        # 每 SAVE_NUM 条样本打包保存一次
+            if new_file and sample_embedded:
+                # 取前 SAVE_NUM 条
+                SAVE_NUM = len(sample_embedded)
+                batch_preds = np.stack(sample_embedded[:SAVE_NUM], axis=0)  # (100, act_dim)
+                batch_gts   = np.stack(sample_gts  [:SAVE_NUM], axis=0)
+
+                # 构造文件名，比如用保存的总文件计数器
+                group_id = (batch_idx * cfg.batch_size) // SAVE_NUM  # 或者自己维护一个计数器
+                save_path = os.path.join(
+                    ACTION_SAVE_PATH,
+                    f"samples_{group_id*SAVE_NUM:06d}_to_{group_id*SAVE_NUM+SAVE_NUM:06d}.npz"
+                )
+                np.savez(save_path,
+                        predicted=batch_preds,
+                        ground_truth=batch_gts,
+                        mlp_preds=sample_mlppreds,
+                        language_instructions = current_instructs,
+                        )
+                print(f"saved {save_path}")
+
+                # 丢弃已经保存过的 SAVE_NUM 条
+                sample_embedded = []
+                sample_gts = []
+                sample_mlppreds = []
+                new_file = False
+            # —— 保存逻辑结束 —— #
+
             compute_diffusion_l1 = cfg.use_diffusion and batch_idx % cfg.diffusion_sample_freq == 0
-            actions_hidden_states, ground_truth_actions = get_forward_action(
+            actions_hidden_states, ground_truth_actions, predicted_actions = get_forward_action(
                 vla=vla,
                 action_head=action_head,
                 noisy_action_projector=noisy_action_projector if cfg.use_diffusion else None,
@@ -891,43 +781,33 @@ def GetEmbedded(cfg: FinetuneConfig) -> None:
              # —— 保存逻辑开始 —— #
             # —— 保存逻辑开始 —— #
             # 转到 CPU + float32 + numpy
-            preds_np = actions_hidden_states.to(torch.float32).detach().cpu().numpy()  # (B, act_dim)
+            embedded_np = actions_hidden_states.to(torch.float32).detach().cpu().numpy()  # (B, act_dim)
             gts_np   = ground_truth_actions.to(torch.float32).detach().cpu().numpy()   # (B, act_dim)
+            mlppreds = predicted_actions.to(torch.float32).detach().cpu().numpy()
+
+            current_instructs = batch["language_instructions"]
 
             # 拆成单条样本，append 进列表
-            for i in range(preds_np.shape[0]):
-                sample_preds.append(preds_np[i])
+            for i in range(embedded_np.shape[0]):
+                sample_embedded.append(embedded_np[i])
                 sample_gts.append(gts_np[i])
+                sample_mlppreds.append(mlppreds[i])
 
-            # 每 SAVE_NUM 条样本打包保存一次
-            while len(sample_preds) >= SAVE_NUM:
-                # 取前 SAVE_NUM 条
-                batch_preds = np.stack(sample_preds[:SAVE_NUM], axis=0)  # (100, act_dim)
-                batch_gts   = np.stack(sample_gts  [:SAVE_NUM], axis=0)
 
-                # 构造文件名，比如用保存的总文件计数器
-                group_id = (batch_idx * cfg.batch_size) // SAVE_NUM  # 或者自己维护一个计数器
-                save_path = os.path.join(
-                    ACTION_SAVE_PATH,
-                    f"samples_{group_id*SAVE_NUM:06d}_to_{group_id*SAVE_NUM+SAVE_NUM:06d}.npz"
-                )
-                np.savez(save_path,
-                        predicted=batch_preds,
-                        ground_truth=batch_gts)
-                print(f"saved {save_path}")
-
-                # 丢弃已经保存过的 SAVE_NUM 条
-                sample_preds = sample_preds[SAVE_NUM:]
-                sample_gts   = sample_gts[SAVE_NUM:]
-            # —— 保存逻辑结束 —— #
 
     # （可选）训练结束后，如果还剩不足 SAVE_NUM 条的样本，也可以再保存一次：
-    if sample_preds:
-        batch_preds = np.stack(sample_preds, axis=0)
+    if sample_embedded:
+        batch_preds = np.stack(sample_embedded, axis=0)
         batch_gts   = np.stack(sample_gts,   axis=0)
         save_path = os.path.join(ACTION_SAVE_PATH, "samples_last.npz")
-        np.savez(save_path, predicted=batch_preds, ground_truth=batch_gts)
-        print(f"saved {save_path} (last {len(sample_preds)} samples)")
+        current_instructs = lang_flag
+        np.savez(save_path,
+                        predicted=batch_preds,
+                        ground_truth=batch_gts,
+                        mlp_preds=sample_mlppreds,
+                        language_instructions = current_instructs,
+                        )
+        print(f"saved {save_path} (last {len(sample_embedded)} samples)")
 
 
 
