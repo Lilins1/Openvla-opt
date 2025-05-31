@@ -9,7 +9,7 @@ import time
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional, Tuple, Type
+from typing import Dict, List, Optional, Tuple, Type
 
 import draccus
 import torch
@@ -26,6 +26,8 @@ from torch.utils.data import DataLoader
 from transformers import AutoConfig, AutoImageProcessor, AutoModelForVision2Seq, AutoProcessor
 from transformers.modeling_outputs import CausalLMOutputWithPast
 
+import numpy as np
+
 import wandb
 
 from experiments.robot.openvla_utils import (
@@ -38,6 +40,9 @@ from prismatic.extern.hf.configuration_prismatic import OpenVLAConfig
 from prismatic.extern.hf.modeling_prismatic import OpenVLAForActionPrediction
 from prismatic.extern.hf.processing_prismatic import PrismaticImageProcessor, PrismaticProcessor
 from prismatic.models.action_heads import DiffusionActionHead, L1RegressionActionHead
+
+from prismatic.models.MLP_RNN_action import MLP_RNN_ActionHead
+
 from prismatic.models.backbones.llm.prompting import PurePromptBuilder
 from prismatic.models.film_vit_wrapper import FiLMedPrismaticVisionBackbone
 from prismatic.models.projectors import (
@@ -58,7 +63,7 @@ from prismatic.vla.constants import (
     NUM_ACTIONS_CHUNK,
     PROPRIO_DIM,
 )
-from prismatic.vla.datasets import RLDSBatchTransform, RLDSDataset
+from prismatic.vla.datasets.datasetsSequence import RLDSBatchTransform, RLDSDataset
 from prismatic.vla.datasets.rlds.utils.data_utils import save_dataset_statistics
 
 # Sane Defaults
@@ -79,12 +84,14 @@ class FinetuneConfig:
     shuffle_buffer_size: int = 100_000               # Dataloader shuffle buffer size (can reduce if OOM errors occur)
 
     # Algorithm and architecture
-    use_l1_regression: bool = True                   # If True, trains continuous action head with L1 regression objective
+    use_l1_regression: bool = False                   # If True, trains continuous action head with L1 regression objective
     use_diffusion: bool = False                      # If True, trains continuous action head with diffusion modeling objective (DDIM)
     num_diffusion_steps: int = 50                    # (When `diffusion==True`) Number of diffusion steps for training
     use_film: bool = False                           # If True, uses FiLM to infuse language inputs into visual features
     num_images_in_input: int = 1                     # Number of images in the VLA input (default: 1)
     use_proprio: bool = False                        # If True, includes robot proprioceptive state in input
+    use_rnn_regression = True
+    rnn_type = 'rnn'                                 #  'rnn', 'lstm', 'gru', 'relu'
 
     # Training configuration
     batch_size: int = 8                              # Batch size per device (total batch size = batch_size * num GPUs)
@@ -281,9 +288,11 @@ def run_forward_pass(
     use_proprio,
     use_film,
     num_patches,
+    use_rnn_regression,
+    rnn_prev_state=None,
     compute_diffusion_l1=False,
     num_diffusion_steps=None,
-) -> Tuple[torch.Tensor, Dict[str, float]]:
+):
     """
     Compute model forward pass and metrics for both training and validation.
 
@@ -347,7 +356,7 @@ def run_forward_pass(
     next_actions_mask = get_next_actions_mask(ground_truth_token_ids)
 
     # Compute metrics for discrete action representation (next-token prediction)
-    if not (use_l1_regression or use_diffusion):
+    if not (use_l1_regression or use_diffusion or use_rnn_regression):
         loss = output.loss
         predicted_token_ids = output.logits[:, num_patches:-1].argmax(dim=2)
         curr_action_accuracy = compute_token_accuracy(
@@ -389,6 +398,21 @@ def run_forward_pass(
             # Predict action
             predicted_actions = action_head.module.predict_action(actions_hidden_states)
             # Get full L1 loss
+            loss = torch.nn.L1Loss()(ground_truth_actions, predicted_actions)
+
+        if use_rnn_regression:
+            # Predict action
+            input_dim = text_hidden_states.shape[-1]  # 这个是 D
+            actions_hidden_states = (
+                text_hidden_states[current_action_mask | next_actions_mask]
+                .reshape(batch_size, NUM_ACTIONS_CHUNK, ACTION_DIM, input_dim)
+                .reshape(batch_size, NUM_ACTIONS_CHUNK, ACTION_DIM * input_dim)
+                .to(torch.bfloat16)
+            )
+            predicted_actions,rnn_prev_state = action_head.module.predict_action(actions_hidden_states,rnn_prev_state)
+            # Get full L1 loss
+            # print(f'ground_truth_actions: {ground_truth_actions}')
+            # print(f'predicted_actions: {predicted_actions}')
             loss = torch.nn.L1Loss()(ground_truth_actions, predicted_actions)
 
 
@@ -444,7 +468,7 @@ def run_forward_pass(
             )
 
     # Return both the loss tensor (with gradients) and the metrics dictionary (with detached values)
-    return loss, metrics
+    return loss, metrics, rnn_prev_state
 
 
 def run_diffusion_sampling(
@@ -708,14 +732,20 @@ def run_validation(
     val_start_time = time.time()
     vla.eval()
     val_batches_count = 0
+    rnn_prev_state = None
 
     # List to store validation metrics
     all_val_metrics = []
 
     with torch.no_grad():
         for batch in val_dataloader:
+            if cfg.use_rnn_regression and lang_flag != batch["language_instructions"]:
+                current_instructs = lang_flag
+                lang_flag = batch["language_instructions"]
+                print(f'language_instructions: {batch["language_instructions"]}')
+                rnn_prev_state = None
             # Always compute L1 loss for validation, even for diffusion
-            _, metrics = run_forward_pass(
+            _, metrics,rnn_prev_state = run_forward_pass(
                 vla=vla,
                 action_head=action_head,
                 noisy_action_projector=noisy_action_projector,
@@ -727,13 +757,15 @@ def run_validation(
                 use_diffusion=cfg.use_diffusion,
                 use_proprio=cfg.use_proprio,
                 use_film=cfg.use_film,
+                use_rnn_regression=cfg.use_rnn_regression,
                 num_patches=num_patches,
+                rnn_prev_state = rnn_prev_state,
                 compute_diffusion_l1=True,
                 num_diffusion_steps=cfg.num_diffusion_steps if cfg.use_diffusion else None,
             )
 
             # Add the loss value to the metrics
-            metrics["loss"] = metrics["loss_value"]
+            metrics["Val loss"] = metrics["loss_value"]
             all_val_metrics.append(metrics)
             val_batches_count += 1
 
@@ -901,6 +933,18 @@ def finetune(cfg: FinetuneConfig) -> None:
             to_bf16=True,
         )
 
+    if cfg.use_rnn_regression:
+        action_head = init_module(
+            MLP_RNN_ActionHead,
+            "mlp_rnn_action_head",
+            cfg,
+            device_id,
+            {"input_dim": vla.module.llm_dim, "action_dim": ACTION_DIM, 'rnn_type':cfg.rnn_type},
+            to_bf16=True,
+        )
+
+        
+
     # If applicable, instantiate diffusion action head and noisy action projector
     if cfg.use_diffusion:
         action_head = init_module(
@@ -938,7 +982,7 @@ def finetune(cfg: FinetuneConfig) -> None:
     # if cfg.use_proprio:
     #     trainable_params += [param for param in proprio_projector.parameters() if param.requires_grad]
 
-    trainable_params = [param for param in action_head.parameters() if param.requires_grad]
+    trainable_params = [param for param in action_head.parameters() if param.requires_grad]# 只训练action_head
     # if cfg.use_l1_regression or cfg.use_diffusion:
     #     trainable_params += [param for param in action_head.parameters() if param.requires_grad]
     # if cfg.use_diffusion:
@@ -1019,18 +1063,19 @@ def finetune(cfg: FinetuneConfig) -> None:
     dataloader = DataLoader(
         train_dataset,
         batch_size=cfg.batch_size,
-        sampler=None,
         collate_fn=collator,
         num_workers=0,  # Important: Set to 0 if using RLDS, which uses its own parallelism
+        shuffle=False,  # 保持顺序
     )
     if cfg.use_val_set:
+        print("cfg.use_val_set: true")
         val_batch_size = cfg.batch_size
         val_dataloader = DataLoader(
             val_dataset,
             batch_size=val_batch_size,
-            sampler=None,
             collate_fn=collator,
             num_workers=0,  # Important: Set to 0 if using RLDS, which uses its own parallelism
+            shuffle=False,  # 保持顺序
         )
 
     # Deque to store recent train metrics (used for computing smoothened metrics for gradient accumulation)
@@ -1044,15 +1089,32 @@ def finetune(cfg: FinetuneConfig) -> None:
 
     ForCount = 0
     normalized_lossAcc = 0
+    rnn_prev_state = None
 
     # Start training
     with tqdm.tqdm(total=cfg.max_steps, leave=False) as progress:
         vla.train()
         optimizer.zero_grad()
+        lang_flag = ""
+        rnn_prev_state = None
+
         for batch_idx, batch in enumerate(dataloader):
+            if cfg.use_rnn_regression and lang_flag != batch["language_instructions"]:
+                current_instructs = lang_flag
+                lang_flag = batch["language_instructions"]
+                # print(f'language_instructions: {batch["language_instructions"]}')
+                # （b）如果确实存在上一轮留下的 hidden state，就先 detach 掉它
+                #     这样可以切断它和之前图的所有依赖，避免显存泄漏
+                # if rnn_prev_state is not None:
+                #     if isinstance(rnn_prev_state, tuple):  # LSTM: (h, c)
+                #         rnn_prev_state = (rnn_prev_state[0].detach(),
+                #                         rnn_prev_state[1].detach())
+                #     else:  # RNN/GRU
+                #         rnn_prev_state = rnn_prev_state.detach()
+                rnn_prev_state = None
             # Compute training metrics and loss
             compute_diffusion_l1 = cfg.use_diffusion and batch_idx % cfg.diffusion_sample_freq == 0
-            loss, metrics = run_forward_pass(
+            loss, metrics,rnn_prev_state = run_forward_pass(
                 vla=vla,
                 action_head=action_head,
                 noisy_action_projector=noisy_action_projector if cfg.use_diffusion else None,
@@ -1064,17 +1126,25 @@ def finetune(cfg: FinetuneConfig) -> None:
                 use_diffusion=cfg.use_diffusion,
                 use_proprio=cfg.use_proprio,
                 use_film=cfg.use_film,
+                use_rnn_regression= cfg.use_rnn_regression,
                 num_patches=NUM_PATCHES,
+                rnn_prev_state=rnn_prev_state,
                 compute_diffusion_l1=compute_diffusion_l1,
                 num_diffusion_steps=cfg.num_diffusion_steps if cfg.use_diffusion else None,
             )
+            # Detach the RNN state to prevent graph retention across batches
+            if cfg.use_rnn_regression:
+                if isinstance(rnn_prev_state, tuple):  # For LSTM
+                    rnn_prev_state = tuple(s.detach() for s in rnn_prev_state)
+                else:  # For RNN or GRU
+                    rnn_prev_state = rnn_prev_state.detach()
 
             # Normalize loss to account for gradient accumulation
             normalized_loss = loss / cfg.grad_accumulation_steps
 
             ForCount += 1
             normalized_lossAcc += loss
-            if ForCount % 100 == 0:
+            if ForCount % 200 == 0:
                 print(f"normalized_lossAvg: {normalized_lossAcc/ForCount}")
                 normalized_lossAcc = 0
                 ForCount = 0

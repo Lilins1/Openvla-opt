@@ -21,6 +21,8 @@ from transformers import AutoConfig, AutoImageProcessor, AutoModelForVision2Seq,
 # Apply JSON numpy patch for serialization
 json_numpy.patch()
 
+from prismatic.models.MLP_RNN_action import MLP_RNN_ActionHead
+
 from prismatic.extern.hf.configuration_prismatic import OpenVLAConfig
 from prismatic.extern.hf.modeling_prismatic import OpenVLAForActionPrediction
 from prismatic.extern.hf.processing_prismatic import PrismaticImageProcessor, PrismaticProcessor
@@ -483,6 +485,8 @@ def get_action_head(cfg: Any, llm_dim: int) -> Union[L1RegressionActionHead, Dif
         action_head = DiffusionActionHead(
             input_dim=llm_dim, hidden_dim=llm_dim, action_dim=ACTION_DIM, num_diffusion_steps=cfg.num_diffusion_steps
         )
+    elif cfg.use_rnn_regression:
+        action_head = MLP_RNN_ActionHead(input_dim=llm_dim, action_dim=ACTION_DIM)
     else:
         raise ValueError("Either use_l1_regression or use_diffusion must be True")
 

@@ -269,48 +269,6 @@ def init_module(
 
 
 
-def compute_smoothened_metrics(metrics_deques) -> dict:
-    """
-    Compute smoothened metrics from recent deques.
-
-    Args:
-        metrics_deques (dict): Dictionary of deques containing recent metrics.
-
-    Returns:
-        dict: Dictionary of smoothened metrics.
-    """
-    smoothened_metrics = {}
-    for name, deque in metrics_deques.items():
-        if deque and len(deque) > 0:
-            smoothened_metrics[name] = sum(deque) / len(deque)
-    return smoothened_metrics
-
-
-def log_metrics_to_wandb(metrics, prefix, step, wandb_entity) -> None:
-    """
-    Log metrics to Weights & Biases.
-
-    Args:
-        metrics (dict): Dictionary of metrics to log
-        prefix (str): Prefix for metric names
-        step (int): Training step
-        wandb_entity (str): W&B entity instance
-
-    Returns:
-        None.
-    """
-    log_dict = {}
-    for name, value in metrics.items():
-        # Map loss_value to Loss for better readability in W&B
-        if name == "loss_value":
-            log_dict[f"{prefix}/Loss"] = value
-        # Keep other metrics as is
-        else:
-            log_dict[f"{prefix}/{name.replace('_', ' ').title()}"] = value
-    wandb_entity.log(log_dict, step=step)
-
-
-
 def get_forward_action(
     vla,
     action_head,
