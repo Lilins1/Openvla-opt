@@ -13,12 +13,14 @@ class MLP_RNN_ActionHead(nn.Module):
         """
         混合模型参数:
         input_size: 输入特征维度 (4096)
-        mlp_hidden_size: MLP输出维度 (1024)
-        rnn_hidden_size: RNN隐藏层大小 (796)
+        mlp_hidden_size: MLP输出维度 (4096)
+        rnn_hidden_size: RNN隐藏层大小 (1024)
         output_size: 输出类别数 (7)
-        num_layers: RNN层数
+        num_layers: RNN层数 2
         rnn_type: 'rnn'/'lstm'/'gru'
+        总内存 = 183,776,519 x 4 bytes = 735.11 MB
         """
+
         super(MLP_RNN_ActionHead, self).__init__()
         
         # 前端MLP
@@ -29,6 +31,8 @@ class MLP_RNN_ActionHead(nn.Module):
             nn.Linear(768 * action_dim, mlp_hidden_size),  # 输出mlp_hidden_size维特征
             nn.ReLU()
         )
+
+        
         
         # 后端RNN
         self.rnn_type = rnn_type.lower()
