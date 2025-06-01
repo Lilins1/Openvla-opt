@@ -25,10 +25,10 @@ class MLP_RNN_ActionHead(nn.Module):
         
         # 前端MLP
         self.mlp = nn.Sequential(
-            nn.Linear(input_dim * action_dim, 768 * action_dim),  # 第一层降维
+            nn.Linear(input_dim * action_dim, 4096),  # 第一层降维
             nn.ReLU(),
-            nn.Dropout(0.2),              # 防止过拟合
-            nn.Linear(768 * action_dim, mlp_hidden_size),  # 输出mlp_hidden_size维特征
+            # nn.Dropout(0.2),              # 防止过拟合
+            nn.Linear(4096, mlp_hidden_size),  # 输出mlp_hidden_size维特征
             nn.ReLU()
         )
 
@@ -66,7 +66,7 @@ class MLP_RNN_ActionHead(nn.Module):
         self.fc = nn.Sequential(
             nn.Linear(rnn_hidden_size, 256),
             nn.ReLU(),
-            nn.Dropout(0.2),
+            # nn.Dropout(0.2),
             nn.Linear(256, action_dim)
         )
     

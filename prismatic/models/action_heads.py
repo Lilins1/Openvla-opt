@@ -18,7 +18,7 @@ class SinusoidalPositionalEncoding(nn.Module):
 
     Adapted from: https://github.com/real-stanford/diffusion_policy/blob/main/diffusion_policy/model/diffusion/positional_embedding.py
     """
-    # 总内存：184,614,919 × 4 = ​​738.46 MB​
+    
     def __init__(self, dim):
         super().__init__()
         self.dim = dim  # dimensionality of the positional encoding
@@ -89,6 +89,7 @@ class L1RegressionActionHead(nn.Module):
         hidden_dim=4096,
         action_dim=7,
     ):
+        # 总内存：184,614,919 × 4 = ​​738.46 MB​
         super().__init__()
         self.action_dim = action_dim
         self.model = MLPResNet(

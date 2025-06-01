@@ -90,8 +90,10 @@ class FinetuneConfig:
     use_film: bool = False                           # If True, uses FiLM to infuse language inputs into visual features
     num_images_in_input: int = 1                     # Number of images in the VLA input (default: 1)
     use_proprio: bool = False                        # If True, includes robot proprioceptive state in input
-    use_rnn_regression = True
+    use_rnn_regression: bool = True
     rnn_type = 'rnn'                                 #  'rnn', 'lstm', 'gru', 'relu'
+    rnn_in_batch: bool = False
+    saved_action_head_path: str = None
 
     # Training configuration
     batch_size: int = 8                              # Batch size per device (total batch size = batch_size * num GPUs)
@@ -127,6 +129,8 @@ class FinetuneConfig:
     wandb_log_freq: int = 10                         # WandB logging frequency in steps
 
     # fmt: on
+
+
 
 
 def remove_ddp_in_checkpoint(state_dict) -> dict:
@@ -654,45 +658,45 @@ def save_training_checkpoint(
     # Save model components (main process only)
     if distributed_state.is_main_process:
         # # Save processor and LoRA adapter
-        # processor.save_pretrained(checkpoint_dir)
-        # vla.module.save_pretrained(adapter_dir)
+        processor.save_pretrained(checkpoint_dir)
+        vla.module.save_pretrained(adapter_dir)
 
         # # Save other components
-        # if cfg.use_proprio and proprio_projector is not None:
-        #     torch.save(proprio_projector.state_dict(), checkpoint_dir / f"proprio_projector--{checkpoint_name_suffix}")
+        if cfg.use_proprio and proprio_projector is not None:
+            torch.save(proprio_projector.state_dict(), checkpoint_dir / f"proprio_projector--{checkpoint_name_suffix}")
 
-        # if cfg.use_diffusion and noisy_action_projector is not None:
-        #     torch.save(
-        #         noisy_action_projector.state_dict(), checkpoint_dir / f"noisy_action_projector--{checkpoint_name_suffix}"
-        #     )
+        if cfg.use_diffusion and noisy_action_projector is not None:
+            torch.save(
+                noisy_action_projector.state_dict(), checkpoint_dir / f"noisy_action_projector--{checkpoint_name_suffix}"
+            )
 
-        if (cfg.use_l1_regression or cfg.use_diffusion) and action_head is not None:
+        if (cfg.use_l1_regression or cfg.use_diffusion or cfg.use_rnn_regression) and action_head is not None:
             torch.save(action_head.state_dict(), checkpoint_dir / f"action_head--{checkpoint_name_suffix}")
 
-    #     if cfg.use_film:
-    #         # To be safe, just save the entire vision backbone (not just FiLM components)
-    #         torch.save(
-    #             vla.module.vision_backbone.state_dict(), checkpoint_dir / f"vision_backbone--{checkpoint_name_suffix}"
-    #         )
+        if cfg.use_film:
+            # To be safe, just save the entire vision backbone (not just FiLM components)
+            torch.save(
+                vla.module.vision_backbone.state_dict(), checkpoint_dir / f"vision_backbone--{checkpoint_name_suffix}"
+            )
 
-    # # Wait for model components to be saved
-    # dist.barrier()
+    # Wait for model components to be saved
+    dist.barrier()
 
     # # Merge LoRA weights into base model and save resulting model checkpoint
     # # Note: Can be very slow on some devices; if so, we recommend merging offline
-    # if cfg.use_lora and cfg.merge_lora_during_training:
-    #     base_vla = AutoModelForVision2Seq.from_pretrained(
-    #         cfg.vla_path, torch_dtype=torch.bfloat16, low_cpu_mem_usage=True, trust_remote_code=True
-    #     )
-    #     merged_vla = PeftModel.from_pretrained(base_vla, adapter_dir)
-    #     merged_vla = merged_vla.merge_and_unload()
+    if cfg.use_lora and cfg.merge_lora_during_training:
+        base_vla = AutoModelForVision2Seq.from_pretrained(
+            cfg.vla_path, torch_dtype=torch.bfloat16, low_cpu_mem_usage=True, trust_remote_code=True
+        )
+        merged_vla = PeftModel.from_pretrained(base_vla, adapter_dir)
+        merged_vla = merged_vla.merge_and_unload()
 
-    #     if distributed_state.is_main_process:
-    #         merged_vla.save_pretrained(checkpoint_dir)
-    #         print(f"Saved merged model for Step {log_step} at: {checkpoint_dir}")
+        if distributed_state.is_main_process:
+            merged_vla.save_pretrained(checkpoint_dir)
+            print(f"Saved merged model for Step {log_step} at: {checkpoint_dir}")
 
-    #     # Wait for merged model to be saved
-    #     dist.barrier()
+        # Wait for merged model to be saved
+        dist.barrier()
 
 
 def run_validation(
@@ -763,6 +767,13 @@ def run_validation(
                 compute_diffusion_l1=True,
                 num_diffusion_steps=cfg.num_diffusion_steps if cfg.use_diffusion else None,
             )
+            # Detach the RNN state to prevent graph retention across batches
+            if cfg.use_rnn_regression:
+                if isinstance(rnn_prev_state, tuple):  # For LSTM
+                    rnn_prev_state = tuple(s.detach() for s in rnn_prev_state)
+                else:  # For RNN or GRU
+                    rnn_prev_state = rnn_prev_state.detach()
+
 
             # Add the loss value to the metrics
             metrics["Val loss"] = metrics["loss_value"]
@@ -939,9 +950,47 @@ def finetune(cfg: FinetuneConfig) -> None:
             "mlp_rnn_action_head",
             cfg,
             device_id,
-            {"input_dim": vla.module.llm_dim, "action_dim": ACTION_DIM, 'rnn_type':cfg.rnn_type},
+            {"input_dim": vla.module.llm_dim, "action_dim": ACTION_DIM, 'rnn_type': cfg.rnn_type},
             to_bf16=True,
         )
+        # 检查是否有保存的模型路径
+        if cfg.saved_action_head_path:
+            # 加载保存的模型权重
+            state_dict = torch.load(cfg.saved_action_head_path, map_location=f'cuda:{device_id}')
+
+            # 当前 action_head 可能被 DDP 包装，真实参数名前会有 'module.' 前缀
+            # 先看一下 model_state_keys 和 ckpt_state_keys 各自是不是带 module. 前缀
+            model_keys = list(action_head.state_dict().keys())
+            ckpt_keys  = list(state_dict.keys())
+
+            # 辅助函数：检测一个 key 列表中是否所有 key 都以 'module.' 开头
+            def all_with_module_prefix(keys):
+                return all(k.startswith('module.') for k in keys)
+
+            # 辅助函数：检测一个 key 列表中是否所有 key 都不以 'module.' 开头
+            def all_without_module_prefix(keys):
+                return all(not k.startswith('module.') for k in keys)
+
+            # 情况 A：模型（DDP 后）带 'module.'，而 checkpoint 全部不带
+            if all_with_module_prefix(model_keys) and all_without_module_prefix(ckpt_keys):
+                new_dict = {}
+                for k, v in state_dict.items():
+                    new_dict['module.' + k] = v
+                state_dict = new_dict
+
+            # 情况 B：模型（单卡/去掉 DDP）不带 'module.'，但 checkpoint 带了
+            elif all_without_module_prefix(model_keys) and all_with_module_prefix(ckpt_keys):
+                new_dict = {}
+                for k, v in state_dict.items():
+                    new_dict[k.replace('module.', '', 1)] = v
+                state_dict = new_dict
+
+            # 其他情况都当做一一对应来直接加载，如果对不上会报错
+            action_head.load_state_dict(state_dict, strict=True)
+            print(f"✅ Loaded pretrained action head from {cfg.saved_action_head_path}")
+        else:
+            print("⚠️ No saved model path provided, initializing new action head")
+
 
         
 
@@ -974,21 +1023,17 @@ def finetune(cfg: FinetuneConfig) -> None:
         NUM_PATCHES += 1
 
     # Instantiate optimizer
-    # trainable_params = [param for param in vla.parameters() if param.requires_grad]
-    # if cfg.use_l1_regression or cfg.use_diffusion:
-    #     trainable_params += [param for param in action_head.parameters() if param.requires_grad]
-    # if cfg.use_diffusion:
-    #     trainable_params += [param for param in noisy_action_projector.parameters() if param.requires_grad]
-    # if cfg.use_proprio:
-    #     trainable_params += [param for param in proprio_projector.parameters() if param.requires_grad]
+    trainable_params = [param for param in vla.parameters() if param.requires_grad]
+    print(f"add vla.parameters: {sum(p.numel() for p in trainable_params)}")
+    if cfg.use_l1_regression or cfg.use_diffusion or cfg.use_rnn_regression:
+        trainable_params += [param for param in action_head.parameters() if param.requires_grad]# 训练action_head
+        print(f"add action_head: {sum(p.numel() for p in trainable_params)}")
+    if cfg.use_diffusion:
+        trainable_params += [param for param in noisy_action_projector.parameters() if param.requires_grad]
+    if cfg.use_proprio:
+        trainable_params += [param for param in proprio_projector.parameters() if param.requires_grad]
+        print(f"add use_proprio: {sum(p.numel() for p in trainable_params)}")
 
-    trainable_params = [param for param in action_head.parameters() if param.requires_grad]# 只训练action_head
-    # if cfg.use_l1_regression or cfg.use_diffusion:
-    #     trainable_params += [param for param in action_head.parameters() if param.requires_grad]
-    # if cfg.use_diffusion:
-    #     trainable_params += [param for param in noisy_action_projector.parameters() if param.requires_grad]
-    # if cfg.use_proprio:
-    #     trainable_params += [param for param in proprio_projector.parameters() if param.requires_grad]
     print(f"# total trainable params: {sum(p.numel() for p in trainable_params)}")
     optimizer = AdamW(trainable_params, lr=cfg.learning_rate)
 
@@ -1099,7 +1144,7 @@ def finetune(cfg: FinetuneConfig) -> None:
         rnn_prev_state = None
 
         for batch_idx, batch in enumerate(dataloader):
-            if cfg.use_rnn_regression and lang_flag != batch["language_instructions"]:
+            if cfg.rnn_in_batch or (cfg.use_rnn_regression and lang_flag != batch["language_instructions"]):# 每batch内训练
                 current_instructs = lang_flag
                 lang_flag = batch["language_instructions"]
                 # print(f'language_instructions: {batch["language_instructions"]}')
@@ -1144,7 +1189,7 @@ def finetune(cfg: FinetuneConfig) -> None:
 
             ForCount += 1
             normalized_lossAcc += loss
-            if ForCount % 200 == 0:
+            if ForCount % 2000 == 0:
                 print(f"normalized_lossAvg: {normalized_lossAcc/ForCount}")
                 normalized_lossAcc = 0
                 ForCount = 0
