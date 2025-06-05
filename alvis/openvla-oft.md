@@ -9,7 +9,21 @@ module load Python/3.10.8-GCCcore-12.2.0
 # create a virtual environment under Python 3.10.8:
 
 python -m venv vlaoft_venv
-source vlaoft_venv/bin/activate
+source /mimer/NOBACKUP/groups/naiss2024-5-164/Sichao/vlaoft_venv/bin/activate
+
+# 回到项目根目录（Openvla-opt）
+cd /mimer/NOBACKUP/groups/naiss2024-5-164/Ruizhe/OPENVLA/Openvla-opt
+
+2
+
+wandb 922db5ed979e11a6bd8cba12e8d3487927152192
+
+
+# 添加当前目录到Python路径
+export PYTHONPATH=$(pwd):$PYTHONPATH
+
+# 验证路径是否设置正确
+echo $PYTHONPATH
 ```
 # CUDA memory: if you have errors of cuda memoery when you python command in terminal, how to creat your specified node with enough node memeroy
 Option 1: go to "Interactive Apps", select 'Desktop (Compute)' or 'Desktop (Login)', here I used 'Desktop (Compute)' as example. 

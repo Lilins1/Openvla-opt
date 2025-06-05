@@ -179,21 +179,7 @@ Submitted batch job 4586952 # similar one, it means success
 #SBATCH --time=24:00:00                                 # Maximum job duration: 24 hours.
 #SBATCH --mail-user=sicliu@kth.se                       # Email address to send job notifications. 
 #SBATCH --mail-type=ALL                                 # Sends email on job BEGIN, END, FAIL, etc.
-#SBATCH -p alvis                                        #Runs the job on the Alvis partition, i.e., the queue/group of nodes you're submitting to.
-
-#!/usr/bin/env bash
-#SBATCH -A NAISS2025-22-791                             
-#SBATCH -J openvlaoft_libero_train                                 
-#SBATCH --output=logs/openvlaoft_libero_out_%j.txt                 
-#SBATCH --error=logs/openvlaoft_libero_err_%j.txt                  
-#SBATCH --nodes=1                                      
-#SBATCH --gpus-per-node=A100:1                         
-#SBATCH --ntasks-per-node=4                            
-#SBATCH --cpus-per-task=6                               
-#SBATCH --time=24:00:00                                 
-#SBATCH --mail-user=lruizhe@kth.se                     
-#SBATCH --mail-type=ALL                             
-#SBATCH -p alvis                                        #
+#SBATCH -p alvis                                        #Runs the job on the Alvis partition, i.e., the queue/group of nodes you're submitting to.                                  #
                             
 
 # -------------------------------
@@ -239,3 +225,14 @@ torchrun --standalone --nnodes 1 --nproc-per-node 4 vla-scripts/finetune_libero.
 ```
 
 Once you finished training and get the action decoder and VLA backbone, you can simply start evaluation with:
+
+
+## 提交作业
+sbatch submit.bash
+squeue -u $USER
+scontrol show job <作业ID>
+# 实时监控输出
+tail -f logs/	libero_out_4589348.txt
+
+# 查看完整输出
+cat 4589365.out
