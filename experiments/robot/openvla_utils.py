@@ -762,7 +762,7 @@ def get_vla_action(
         # Process additional wrist images if any
         if all_images:
             all_wrist_inputs = [
-                processor(prompt, image_wrist).to(DEVICE, dtype=torch.bfloat16) for image_wrist in all_images
+                processor(prompt, image_wrist).to(DEVICE, dtype=torch.bfloat16) for image_wrist in all_images #Solving Image
             ]
             # Concatenate all images
             primary_pixel_values = inputs["pixel_values"]
