@@ -25,8 +25,6 @@ from torch.optim.lr_scheduler import MultiStepLR
 from torch.utils.data import DataLoader
 from transformers import AutoConfig, AutoImageProcessor, AutoModelForVision2Seq, AutoProcessor
 from transformers.modeling_outputs import CausalLMOutputWithPast
-from torch.utils.data.distributed import DistributedSampler
-
 import numpy as np
 
 import wandb
@@ -1152,37 +1150,21 @@ def finetune(cfg: FinetuneConfig) -> None:
     collator = PaddedCollatorForActionPrediction(
         processor.tokenizer.model_max_length, processor.tokenizer.pad_token_id, padding_side="right"
     )
-    # --- 在这里构造 DistributedSampler ---
-    train_sampler = DistributedSampler(
-        train_dataset,
-        num_replicas=dist.get_world_size(),
-        rank=dist.get_rank(),
-        shuffle=True,               # 保持原来“shuffle=True”的语义
-        drop_last=False,            # 根据需要决定是否丢弃尾部不足一个 batch 的数据
-    )
-    # 注意：如果你用的是 RLDSDataset，num_workers=0 保持不变
     dataloader = DataLoader(
         train_dataset,
         batch_size=cfg.batch_size,
-        sampler=train_sampler,
+        sampler=None,
         collate_fn=collator,
-        num_workers=0,
+        num_workers=0,  # Important: Set to 0 if using RLDS, which uses its own parallelism
     )
     if cfg.use_val_set:
         val_batch_size = cfg.batch_size
-        val_sampler = DistributedSampler(
-            val_dataset,
-            num_replicas=dist.get_world_size(),
-            rank=dist.get_rank(),
-            shuffle=False,            # 验证集一般不需要打乱
-            drop_last=False,
-        )
         val_dataloader = DataLoader(
             val_dataset,
             batch_size=val_batch_size,
-            sampler=val_sampler,
+            sampler=None,
             collate_fn=collator,
-            num_workers=0,
+            num_workers=0, 
         )
 
     ## Used for oder training

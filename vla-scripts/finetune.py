@@ -64,8 +64,6 @@ from prismatic.vla.datasets.rlds.utils.data_utils import save_dataset_statistics
 # Sane Defaults
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-forCount = 0
-forSum = 0
 
 @dataclass
 class FinetuneConfig:
@@ -81,7 +79,7 @@ class FinetuneConfig:
     # Algorithm and architecture
     use_l1_regression: bool = True                   # If True, trains continuous action head with L1 regression objective
     use_diffusion: bool = False                      # If True, trains continuous action head with diffusion modeling objective (DDIM)
-    num_diffusion_steps: int = 50                    # (When `diffusion==True`) Number of diffusion steps for training
+    num_diffusion_steps_train: int = 50              # (When `diffusion==True`) Number of diffusion steps used for training
     use_film: bool = False                           # If True, uses FiLM to infuse language inputs into visual features
     num_images_in_input: int = 1                     # Number of images in the VLA input (default: 1)
     use_proprio: bool = False                        # If True, includes robot proprioceptive state in input
@@ -282,7 +280,7 @@ def run_forward_pass(
     use_film,
     num_patches,
     compute_diffusion_l1=False,
-    num_diffusion_steps=None,
+    num_diffusion_steps_train=None,
 ) -> Tuple[torch.Tensor, Dict[str, float]]:
     """
     Compute model forward pass and metrics for both training and validation.
@@ -302,7 +300,7 @@ def run_forward_pass(
         num_patches (int): Number of vision patches.
         compute_diffusion_l1 (bool): Whether to sample actions and compute L1 loss for diffusion (do this once every
                                     diffusion_sample_freq steps during training; do it every batch for validation)
-        num_diffusion_steps (int): Number of diffusion steps (only used for diffusion).
+        num_diffusion_steps_train (int): Number of diffusion steps for training (only used for diffusion).
 
     Returns:
         tuple: (loss, metrics_dict)
@@ -390,10 +388,6 @@ def run_forward_pass(
             predicted_actions = action_head.module.predict_action(actions_hidden_states)
             # Get full L1 loss
             loss = torch.nn.L1Loss()(ground_truth_actions, predicted_actions)
-
-
-            # print(f"ground_truth_actions: {ground_truth_actions}")
-            # print(f"predicted_actions: {predicted_actions}")
 
         if use_diffusion:
             # Predict noise
@@ -491,7 +485,7 @@ def run_diffusion_sampling(
     )  # (B, chunk_len, action_dim)
 
     # Set diffusion timestep values
-    action_head.module.noise_scheduler.set_timesteps(action_head.module.num_diffusion_steps)
+    action_head.module.noise_scheduler.set_timesteps(action_head.module.num_diffusion_steps_train)
 
     # Reverse diffusion: Iteratively denoise to generate action, conditioned on observation
     curr_noisy_actions = noise
@@ -629,46 +623,46 @@ def save_training_checkpoint(
 
     # Save model components (main process only)
     if distributed_state.is_main_process:
-        # # Save processor and LoRA adapter
-        # processor.save_pretrained(checkpoint_dir)
-        # vla.module.save_pretrained(adapter_dir)
+        # Save processor and LoRA adapter
+        processor.save_pretrained(checkpoint_dir)
+        vla.module.save_pretrained(adapter_dir)
 
-        # # Save other components
-        # if cfg.use_proprio and proprio_projector is not None:
-        #     torch.save(proprio_projector.state_dict(), checkpoint_dir / f"proprio_projector--{checkpoint_name_suffix}")
+        # Save other components
+        if cfg.use_proprio and proprio_projector is not None:
+            torch.save(proprio_projector.state_dict(), checkpoint_dir / f"proprio_projector--{checkpoint_name_suffix}")
 
-        # if cfg.use_diffusion and noisy_action_projector is not None:
-        #     torch.save(
-        #         noisy_action_projector.state_dict(), checkpoint_dir / f"noisy_action_projector--{checkpoint_name_suffix}"
-        #     )
+        if cfg.use_diffusion and noisy_action_projector is not None:
+            torch.save(
+                noisy_action_projector.state_dict(), checkpoint_dir / f"noisy_action_projector--{checkpoint_name_suffix}"
+            )
 
         if (cfg.use_l1_regression or cfg.use_diffusion) and action_head is not None:
             torch.save(action_head.state_dict(), checkpoint_dir / f"action_head--{checkpoint_name_suffix}")
 
-    #     if cfg.use_film:
-    #         # To be safe, just save the entire vision backbone (not just FiLM components)
-    #         torch.save(
-    #             vla.module.vision_backbone.state_dict(), checkpoint_dir / f"vision_backbone--{checkpoint_name_suffix}"
-    #         )
+        if cfg.use_film:
+            # To be safe, just save the entire vision backbone (not just FiLM components)
+            torch.save(
+                vla.module.vision_backbone.state_dict(), checkpoint_dir / f"vision_backbone--{checkpoint_name_suffix}"
+            )
 
-    # # Wait for model components to be saved
-    # dist.barrier()
+    # Wait for model components to be saved
+    dist.barrier()
 
-    # # Merge LoRA weights into base model and save resulting model checkpoint
-    # # Note: Can be very slow on some devices; if so, we recommend merging offline
-    # if cfg.use_lora and cfg.merge_lora_during_training:
-    #     base_vla = AutoModelForVision2Seq.from_pretrained(
-    #         cfg.vla_path, torch_dtype=torch.bfloat16, low_cpu_mem_usage=True, trust_remote_code=True
-    #     )
-    #     merged_vla = PeftModel.from_pretrained(base_vla, adapter_dir)
-    #     merged_vla = merged_vla.merge_and_unload()
+    # Merge LoRA weights into base model and save resulting model checkpoint
+    # Note: Can be very slow on some devices; if so, we recommend merging offline
+    if cfg.use_lora and cfg.merge_lora_during_training:
+        base_vla = AutoModelForVision2Seq.from_pretrained(
+            cfg.vla_path, torch_dtype=torch.bfloat16, low_cpu_mem_usage=True, trust_remote_code=True
+        )
+        merged_vla = PeftModel.from_pretrained(base_vla, adapter_dir)
+        merged_vla = merged_vla.merge_and_unload()
 
-    #     if distributed_state.is_main_process:
-    #         merged_vla.save_pretrained(checkpoint_dir)
-    #         print(f"Saved merged model for Step {log_step} at: {checkpoint_dir}")
+        if distributed_state.is_main_process:
+            merged_vla.save_pretrained(checkpoint_dir)
+            print(f"Saved merged model for Step {log_step} at: {checkpoint_dir}")
 
-    #     # Wait for merged model to be saved
-    #     dist.barrier()
+        # Wait for merged model to be saved
+        dist.barrier()
 
 
 def run_validation(
@@ -729,7 +723,7 @@ def run_validation(
                 use_film=cfg.use_film,
                 num_patches=num_patches,
                 compute_diffusion_l1=True,
-                num_diffusion_steps=cfg.num_diffusion_steps if cfg.use_diffusion else None,
+                num_diffusion_steps_train=cfg.num_diffusion_steps_train if cfg.use_diffusion else None,
             )
 
             # Add the loss value to the metrics
@@ -912,7 +906,7 @@ def finetune(cfg: FinetuneConfig) -> None:
                 "input_dim": vla.module.llm_dim,
                 "hidden_dim": vla.module.llm_dim,
                 "action_dim": ACTION_DIM,
-                "num_diffusion_steps": cfg.num_diffusion_steps,
+                "num_diffusion_steps_train": cfg.num_diffusion_steps_train,
             },
             to_bf16=True,
         )
@@ -930,21 +924,13 @@ def finetune(cfg: FinetuneConfig) -> None:
         NUM_PATCHES += 1
 
     # Instantiate optimizer
-    # trainable_params = [param for param in vla.parameters() if param.requires_grad]
-    # if cfg.use_l1_regression or cfg.use_diffusion:
-    #     trainable_params += [param for param in action_head.parameters() if param.requires_grad]
-    # if cfg.use_diffusion:
-    #     trainable_params += [param for param in noisy_action_projector.parameters() if param.requires_grad]
-    # if cfg.use_proprio:
-    #     trainable_params += [param for param in proprio_projector.parameters() if param.requires_grad]
-
-    trainable_params = [param for param in action_head.parameters() if param.requires_grad]
-    # if cfg.use_l1_regression or cfg.use_diffusion:
-    #     trainable_params += [param for param in action_head.parameters() if param.requires_grad]
-    # if cfg.use_diffusion:
-    #     trainable_params += [param for param in noisy_action_projector.parameters() if param.requires_grad]
-    # if cfg.use_proprio:
-    #     trainable_params += [param for param in proprio_projector.parameters() if param.requires_grad]
+    trainable_params = [param for param in vla.parameters() if param.requires_grad]
+    if cfg.use_l1_regression or cfg.use_diffusion:
+        trainable_params += [param for param in action_head.parameters() if param.requires_grad]
+    if cfg.use_diffusion:
+        trainable_params += [param for param in noisy_action_projector.parameters() if param.requires_grad]
+    if cfg.use_proprio:
+        trainable_params += [param for param in proprio_projector.parameters() if param.requires_grad]
     print(f"# total trainable params: {sum(p.numel() for p in trainable_params)}")
     optimizer = AdamW(trainable_params, lr=cfg.learning_rate)
 
@@ -1042,9 +1028,6 @@ def finetune(cfg: FinetuneConfig) -> None:
         "next_actions_l1_loss": deque(maxlen=cfg.grad_accumulation_steps),
     }
 
-    ForCount = 0
-    normalized_lossAcc = 0
-
     # Start training
     with tqdm.tqdm(total=cfg.max_steps, leave=False) as progress:
         vla.train()
@@ -1066,18 +1049,11 @@ def finetune(cfg: FinetuneConfig) -> None:
                 use_film=cfg.use_film,
                 num_patches=NUM_PATCHES,
                 compute_diffusion_l1=compute_diffusion_l1,
-                num_diffusion_steps=cfg.num_diffusion_steps if cfg.use_diffusion else None,
+                num_diffusion_steps_train=cfg.num_diffusion_steps_train if cfg.use_diffusion else None,
             )
 
             # Normalize loss to account for gradient accumulation
             normalized_loss = loss / cfg.grad_accumulation_steps
-
-            ForCount += 1
-            normalized_lossAcc += loss
-            if ForCount % 100 == 0:
-                print(f"normalized_lossAvg: {normalized_lossAcc/ForCount}")
-                normalized_lossAcc = 0
-                ForCount = 0
 
             # Backward pass
             normalized_loss.backward()

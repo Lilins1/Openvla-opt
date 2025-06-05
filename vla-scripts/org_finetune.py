@@ -64,6 +64,8 @@ from prismatic.vla.datasets.rlds.utils.data_utils import save_dataset_statistics
 # Sane Defaults
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
+forCount = 0
+forSum = 0
 
 @dataclass
 class FinetuneConfig:
@@ -77,12 +79,17 @@ class FinetuneConfig:
     shuffle_buffer_size: int = 100_000               # Dataloader shuffle buffer size (can reduce if OOM errors occur)
 
     # Algorithm and architecture
-    use_l1_regression: bool = True                   # If True, trains continuous action head with L1 regression objective
+    use_l1_regression: bool = False                   # If True, trains continuous action head with L1 regression objective
     use_diffusion: bool = False                      # If True, trains continuous action head with diffusion modeling objective (DDIM)
-    num_diffusion_steps_train: int = 50              # (When `diffusion==True`) Number of diffusion steps used for training
+    num_diffusion_steps_train: int = 50              # (When `diffusion==True`) Number of diffusion steps for training
     use_film: bool = False                           # If True, uses FiLM to infuse language inputs into visual features
     num_images_in_input: int = 1                     # Number of images in the VLA input (default: 1)
     use_proprio: bool = False                        # If True, includes robot proprioceptive state in input
+    saved_proprio_path: str = None
+    use_rnn_regression: bool = True
+    rnn_type = 'rnn'                                 #  'rnn', 'lstm', 'gru', 'relu'
+    rnn_in_batch: bool = False
+    saved_action_head_path: str = None
 
     # Training configuration
     batch_size: int = 8                              # Batch size per device (total batch size = batch_size * num GPUs)
@@ -109,6 +116,7 @@ class FinetuneConfig:
     merge_lora_during_training: bool = True          # If True, merges LoRA weights and saves result during training
                                                      #   Note: Merging can be very slow on some machines. If so, set to
                                                      #         False and merge final checkpoint offline!
+    save_vla: bool = True                           # if Save Vla model
 
     # Logging
     wandb_entity: str = "your-wandb-entity"          # Name of WandB entity
