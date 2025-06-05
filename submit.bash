@@ -4,8 +4,8 @@
 #SBATCH --output=logs/libero_out_%j.txt
 #SBATCH --error=logs/libero_err_%j.txt
 #SBATCH --nodes=1
-#SBATCH --gpus-per-node=A100fat:4
-#SBATCH --ntasks-per-node=4
+#SBATCH --gpus-per-node=A100fat:1
+#SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=12
 #SBATCH --time=72:00:00
 #SBATCH --mail-user=lruizhe@kth.se
@@ -43,4 +43,4 @@ nvidia-smi
 # -------------------------------
 # Run your training script
 # -------------------------------
-torchrun --standalone --nnodes 1 --nproc-per-node 4 vla-scripts/org_finetune.py --vla_path openvla/openvla-7b --data_root_dir /mimer/NOBACKUP/groups/naiss2024-5-164/Ruizhe/OPENVLA/modified_libero_rlds --dataset_name libero_spatial_no_noops --run_root_dir /mimer/NOBACKUP/groups/naiss2024-5-164/Ruizhe/OPENVLA/rnn_model/lebiro/libero_spatial_no_noops/lora_train --use_film False --num_images_in_input 2 --use_proprio True --batch_size 8 --learning_rate 5e-4 --num_steps_before_decay 100000 --max_steps 150005 --save_freq 25000 --save_latest_checkpoint_only False --image_aug True --lora_rank 32 --wandb_project vla-libero_spatial_no_noops --wandb_entity chu2002-kth-royal-institute-of-technology --shuffle_buffer_size 100000 --use_l1_regression True --use_rnn_regression False --save_vla False --rnn_in_batch True --run_id_note parallel_dec--8_acts--continuous_acts--rnn--finetune_RNN
+torchrun --standalone --nnodes 1 --nproc-per-node 1 vla-scripts/org_finetune.py --vla_path openvla/openvla-7b --data_root_dir /mimer/NOBACKUP/groups/naiss2024-5-164/Ruizhe/OPENVLA/modified_libero_rlds --dataset_name libero_spatial_no_noops --run_root_dir /mimer/NOBACKUP/groups/naiss2024-5-164/Ruizhe/OPENVLA/rnn_model/lebiro/libero_spatial_no_noops/lora_train --use_film False --num_images_in_input 2 --use_proprio True --batch_size 8 --learning_rate 5e-4 --num_steps_before_decay 100000 --max_steps 150005 --save_freq 25000 --save_latest_checkpoint_only False --image_aug True --lora_rank 32 --wandb_project vla-libero_spatial_no_noops --wandb_entity chu2002-kth-royal-institute-of-technology --shuffle_buffer_size 100000 --use_l1_regression False --use_rnn_regression True --save_vla False --rnn_in_batch True --run_id_note parallel_dec--8_acts--continuous_acts--rnn--finetune_RNN
