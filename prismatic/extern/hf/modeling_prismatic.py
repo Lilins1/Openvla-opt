@@ -929,8 +929,6 @@ class OpenVLAForActionPrediction(PrismaticForConditionalGeneration):
                 normalized_actions = normalized_actions.reshape(NUM_ACTIONS_CHUNK, ACTION_DIM)
                 normalized_actions = normalized_actions.float().cpu().detach().numpy()
 
-               
-
             else:
                 # L1 regression prediction
                 normalized_actions = action_head.predict_action(actions_hidden_states)
@@ -964,6 +962,7 @@ class OpenVLAForActionPrediction(PrismaticForConditionalGeneration):
         noisy_action_projector=None,
         use_film: bool = False,
         rnn_state= None,
+        cfg=None,
         **kwargs: str,
     ) -> np.ndarray:
         """Predict actions from input sequence, with options for different prediction methods.
@@ -1065,6 +1064,7 @@ class OpenVLAForActionPrediction(PrismaticForConditionalGeneration):
                 NUM_PROMPT_TOKENS,
                 action_head,
                 rnn_state= rnn_state,
+                cfg=cfg,
             )
 
         # Unnormalize predicted actions

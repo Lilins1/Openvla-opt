@@ -794,6 +794,7 @@ def get_vla_action(
                 action_head=action_head,
                 use_film=use_film,
                 rnn_state=rnn_state,
+                cfg=cfg,
             )
 
     # Extract subset of actions for open loop steps
