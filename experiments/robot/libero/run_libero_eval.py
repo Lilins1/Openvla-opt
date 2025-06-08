@@ -290,6 +290,8 @@ def run_episode(
     # Reset environment
     env.reset()
 
+    rnn_state= None
+
     # Set initial state if provided
     if initial_state is not None:
         obs = env.set_init_state(initial_state)
@@ -325,7 +327,7 @@ def run_episode(
             # If action queue is empty, requery model
             if len(action_queue) == 0:
                 # Query model to get action
-                actions = get_action(
+                actions,rnn_state = get_action(
                     cfg,
                     model,
                     observation,
@@ -335,6 +337,7 @@ def run_episode(
                     proprio_projector=proprio_projector,
                     noisy_action_projector=noisy_action_projector,
                     use_film=cfg.use_film,
+                    rnn_state= rnn_state,
                 )
                 action_queue.extend(actions)
 
