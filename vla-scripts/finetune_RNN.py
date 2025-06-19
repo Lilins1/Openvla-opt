@@ -63,9 +63,12 @@ from prismatic.vla.constants import (
     ACTION_PROPRIO_NORMALIZATION_TYPE,
     NUM_ACTIONS_CHUNK,
     PROPRIO_DIM,
+    ACTION_CHUNK_PER_CURVE,
 )
 from prismatic.vla.datasets.datasetsSequence import RLDSBatchTransform, RLDSDataset
 from prismatic.vla.datasets.rlds.utils.data_utils import save_dataset_statistics
+
+from prismatic.vla.datasets.DataProcess import BezierProcess
 
 # Sane Defaults
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -381,6 +384,7 @@ def run_forward_pass(
     rnn_prev_state=None,
     compute_diffusion_l1=False,
     num_diffusion_steps_train=None,
+    epsilon = 0.05,
 ):
     """
     Compute model forward pass and metrics for both training and validation.
@@ -490,6 +494,14 @@ def run_forward_pass(
             )  # (B, act_chunk_len, D)
 
         if use_model == 'use_bezier_regression':
+
+            ground_truth_batch = ground_truth_actions
+            ground_truth_actions = []
+            for ground_truth in ground_truth_batch:
+                curve_fit = BezierProcess.fitBezierToolBox.fit_beziers(ground_truth,epsilon)
+                if len(curve_fit) > NUM_ACTIONS_CHUNK//ACTION_CHUNK_PER_CURVE:
+                    curve_fit = curve_fit[:NUM_ACTIONS_CHUNK//ACTION_CHUNK_PER_CURVE]
+                ground_truth_actions  = ground_truth_actions.append(curve_fit)
             actions_hidden_states = (
             text_hidden_states[current_action_mask | next_actions_mask]
             .reshape(batch_size, NUM_ACTIONS_CHUNK * ACTION_DIM, -1)
@@ -499,7 +511,7 @@ def run_forward_pass(
             predicted_actions,curve_length = action_head.module.predict_action(actions_hidden_states)
             predicted_actions.append(curve_length)
             # Get full L1 loss
-            loss = torch.nn.L1Loss()(ground_truth_actions, predicted_actions)
+            loss = torch.nn.L1Loss()(ground_truth_actions, predicted_actions)# TODO curve_length is a logit
 
         if use_model == 'use_l1_regression':
             actions_hidden_states = (
