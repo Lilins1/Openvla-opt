@@ -13,7 +13,7 @@ class Bezier_MLP_Action(nn.Module):
                  action_dim=ACTION_DIM,
                  mlp_hidden_size=4096,
                  decoder_hidden_size=1024,
-                 continuous_dim=14,
+                 continuous_dim=ACTION_DIM*ACTION_CHUNK_PER_CURVE,
                  token_seq_len=TOKEN_SEQUENCE_LINE,
                  dropout=0.1):
         super(Bezier_MLP_Action, self).__init__()

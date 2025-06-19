@@ -42,6 +42,8 @@ from prismatic.models.action_heads import DiffusionActionHead, L1RegressionActio
 
 from prismatic.models.MLP_RNN_action import MLP_RNN_ActionHead
 
+from prismatic.models.Bezier_MLP_Action import Bezier_MLP_Action
+
 from prismatic.models.backbones.llm.prompting import PurePromptBuilder
 from prismatic.models.film_vit_wrapper import FiLMedPrismaticVisionBackbone
 from prismatic.models.projectors import (
@@ -406,6 +408,7 @@ def run_forward_pass(
             metrics_dict: Dictionary of computed metrics (detached values for logging).
     """
     metrics = {}
+    curve_length = 1
 
     # Get ground-truth action labels
     ground_truth_actions = batch["actions"].to(device_id).to(torch.bfloat16)
@@ -485,6 +488,18 @@ def run_forward_pass(
             .reshape(batch_size, NUM_ACTIONS_CHUNK * ACTION_DIM, -1)
             .to(torch.bfloat16)
             )  # (B, act_chunk_len, D)
+
+        if use_model == 'use_bezier_regression':
+            actions_hidden_states = (
+            text_hidden_states[current_action_mask | next_actions_mask]
+            .reshape(batch_size, NUM_ACTIONS_CHUNK * ACTION_DIM, -1)
+            .to(torch.bfloat16)
+            )  # (B, act_chunk_len, D)
+            # Predict action
+            predicted_actions,curve_length = action_head.module.predict_action(actions_hidden_states)
+            predicted_actions.append(curve_length)
+            # Get full L1 loss
+            loss = torch.nn.L1Loss()(ground_truth_actions, predicted_actions)
 
         if use_model == 'use_l1_regression':
             actions_hidden_states = (
@@ -1054,6 +1069,15 @@ def finetune(cfg: FinetuneConfig) -> None:
             to_bf16=True,
         )
 
+    if cfg.use_bezier_regression:
+        action_head = init_module(
+            Bezier_MLP_Action,
+            "mlp_rnn_action_head",
+            cfg,
+            device_id,
+            {"input_dim": vla.module.llm_dim, "action_dim": ACTION_DIM},
+            to_bf16=True,
+        )
         
 
     # If applicable, instantiate diffusion action head and noisy action projector
