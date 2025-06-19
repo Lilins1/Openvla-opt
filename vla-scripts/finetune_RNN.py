@@ -85,15 +85,20 @@ class FinetuneConfig:
     # Algorithm and architecture
     use_l1_regression: bool = False                   # If True, trains continuous action head with L1 regression objective
     use_diffusion: bool = False                      # If True, trains continuous action head with diffusion modeling objective (DDIM)
+    use_rnn_regression: bool = True
+    use_bezier_regression: bool = False
+
+    use_model: str = 'use_bezier_regression'
+
     num_diffusion_steps_train: int = 50              # (When `diffusion==True`) Number of diffusion steps for training
     use_film: bool = False                           # If True, uses FiLM to infuse language inputs into visual features
     num_images_in_input: int = 1                     # Number of images in the VLA input (default: 1)
     use_proprio: bool = False                        # If True, includes robot proprioceptive state in input
     saved_proprio_path: str = None
-    use_rnn_regression: bool = True
     rnn_type = 'rnn'                                 #  'rnn', 'lstm', 'gru', 'relu'
     rnn_in_batch: bool = False
     saved_action_head_path: str = None
+    
 
     # Training configuration
     batch_size: int = 8                              # Batch size per device (total batch size = batch_size * num GPUs)
@@ -367,12 +372,10 @@ def run_forward_pass(
     batch,
     action_tokenizer,
     device_id,
-    use_l1_regression,
-    use_diffusion,
+    use_model,
     use_proprio,
     use_film,
     num_patches,
-    use_rnn_regression,
     rnn_prev_state=None,
     compute_diffusion_l1=False,
     num_diffusion_steps_train=None,
@@ -407,8 +410,11 @@ def run_forward_pass(
     # Get ground-truth action labels
     ground_truth_actions = batch["actions"].to(device_id).to(torch.bfloat16)
 
+    
+
+
     # [Only for diffusion] Sample noisy actions used as input for noise predictor network
-    if use_diffusion:
+    if use_model == 'use_diffusion':
         noisy_dict = action_head.module.sample_noisy_actions(ground_truth_actions)
         noise, noisy_actions, diffusion_timestep_embeddings = (
             noisy_dict["noise"],
@@ -428,9 +434,9 @@ def run_forward_pass(
             output_hidden_states=True,
             proprio=batch["proprio"] if use_proprio else None,
             proprio_projector=proprio_projector if use_proprio else None,
-            noisy_actions=noisy_actions if use_diffusion else None,
-            noisy_action_projector=noisy_action_projector if use_diffusion else None,
-            diffusion_timestep_embeddings=diffusion_timestep_embeddings if use_diffusion else None,
+            noisy_actions=noisy_actions if (use_model == 'use_diffusion') else None,
+            noisy_action_projector=noisy_action_projector if (use_model == 'use_diffusion') else None,
+            diffusion_timestep_embeddings=diffusion_timestep_embeddings if (use_model == 'use_diffusion') else None,
             use_film=use_film,
         )
 
@@ -440,7 +446,7 @@ def run_forward_pass(
     next_actions_mask = get_next_actions_mask(ground_truth_token_ids)
 
     # Compute metrics for discrete action representation (next-token prediction)
-    if not (use_l1_regression or use_diffusion or use_rnn_regression):
+    if not (use_model is not None):
         loss = output.loss
         predicted_token_ids = output.logits[:, num_patches:-1].argmax(dim=2)
         curr_action_accuracy = compute_token_accuracy(
@@ -472,19 +478,26 @@ def run_forward_pass(
         text_hidden_states = last_hidden_states[:, num_patches:-1]
         # Get hidden states for action portion of response
         batch_size = batch["input_ids"].shape[0]
-        actions_hidden_states = (
+
+        if use_model == 'use_bezier_regression':
+            actions_hidden_states = (
             text_hidden_states[current_action_mask | next_actions_mask]
             .reshape(batch_size, NUM_ACTIONS_CHUNK * ACTION_DIM, -1)
             .to(torch.bfloat16)
-        )  # (B, act_chunk_len, D)
+            )  # (B, act_chunk_len, D)
 
-        if use_l1_regression:
+        if use_model == 'use_l1_regression':
+            actions_hidden_states = (
+            text_hidden_states[current_action_mask | next_actions_mask]
+            .reshape(batch_size, NUM_ACTIONS_CHUNK * ACTION_DIM, -1)
+            .to(torch.bfloat16)
+            )  # (B, act_chunk_len, D)
             # Predict action
             predicted_actions = action_head.module.predict_action(actions_hidden_states)
             # Get full L1 loss
             loss = torch.nn.L1Loss()(ground_truth_actions, predicted_actions)
 
-        if use_rnn_regression:
+        if use_model == 'use_rnn_regression':
             # Predict action
             input_dim = text_hidden_states.shape[-1]  # 这个是 D
             actions_hidden_states = (
@@ -502,8 +515,14 @@ def run_forward_pass(
 
             # print(f"ground_truth_actions: {ground_truth_actions}")
             # print(f"predicted_actions: {predicted_actions}")
+            
 
-        if use_diffusion:
+        if use_model == 'use_diffusion':
+            actions_hidden_states = (
+            text_hidden_states[current_action_mask | next_actions_mask]
+            .reshape(batch_size, NUM_ACTIONS_CHUNK * ACTION_DIM, -1)
+            .to(torch.bfloat16)
+            )  # (B, act_chunk_len, D)
             # Predict noise
             noise_pred = action_head.module.predict_noise(actions_hidden_states)
             # Get diffusion noise prediction MSE loss
@@ -536,7 +555,7 @@ def run_forward_pass(
         )
 
         # Get detailed L1 losses for logging
-        should_log_l1_loss = not use_diffusion or (use_diffusion and compute_diffusion_l1)
+        should_log_l1_loss = not use_model == 'use_diffusion' or (use_model == 'use_diffusion' and compute_diffusion_l1)
         if should_log_l1_loss:
             ground_truth_curr_action = ground_truth_actions[:, 0]
             predicted_curr_action = predicted_actions[:, 0]
@@ -787,7 +806,7 @@ def run_validation(
     val_dataloader,
     action_tokenizer,
     device_id,
-    cfg,
+    cfg: FinetuneConfig,
     num_patches,
     log_step,
     distributed_state,
@@ -837,11 +856,7 @@ def run_validation(
                 batch=batch,
                 action_tokenizer=action_tokenizer,
                 device_id=device_id,
-                use_l1_regression=cfg.use_l1_regression,
-                use_diffusion=cfg.use_diffusion,
-                use_proprio=cfg.use_proprio,
-                use_film=cfg.use_film,
-                use_rnn_regression=cfg.use_rnn_regression,
+                use_model=cfg.use_model,
                 num_patches=num_patches,
                 rnn_prev_state = rnn_prev_state,
                 compute_diffusion_l1=True,
@@ -899,6 +914,11 @@ def finetune(cfg: FinetuneConfig) -> None:
     assert not (cfg.use_l1_regression and cfg.use_diffusion), (
         "Cannot do both L1 regression and diffusion. Please pick one of them!"
     )
+
+    cfg.use_l1_regression = (cfg.use_model == 'use_l1_regression') 
+    cfg.use_diffusion = (cfg.use_model == 'use_diffusion') 
+    cfg.use_bezier_regression = (cfg.use_model == 'use_bezier_regression') 
+    cfg.use_rnn_regression = (cfg.use_model == 'use_rnn_regression') 
 
     # Trim trailing forward slash ('/') in VLA path if it exists
     cfg.vla_path = cfg.vla_path.rstrip("/")
@@ -1130,6 +1150,7 @@ def finetune(cfg: FinetuneConfig) -> None:
         resize_resolution=tuple(vla.module.config.image_sizes),
         shuffle_buffer_size=cfg.shuffle_buffer_size,
         image_aug=cfg.image_aug,
+        curve_fit_mode = cfg.use_bezier_regression,
     )
     if cfg.use_val_set:
         val_dataset = RLDSDataset(
@@ -1210,15 +1231,7 @@ def finetune(cfg: FinetuneConfig) -> None:
             if cfg.rnn_in_batch or (cfg.use_rnn_regression and lang_flag != batch["language_instructions"]):# 每batch内训练
                 current_instructs = lang_flag
                 lang_flag = batch["language_instructions"]
-                # print(f'language_instructions: {batch["language_instructions"]}')
-                # （b）如果确实存在上一轮留下的 hidden state，就先 detach 掉它
-                #     这样可以切断它和之前图的所有依赖，避免显存泄漏
-                # if rnn_prev_state is not None:
-                #     if isinstance(rnn_prev_state, tuple):  # LSTM: (h, c)
-                #         rnn_prev_state = (rnn_prev_state[0].detach(),
-                #                         rnn_prev_state[1].detach())
-                #     else:  # RNN/GRU
-                #         rnn_prev_state = rnn_prev_state.detach()
+
                 rnn_prev_state = None
             # Compute training metrics and loss
             compute_diffusion_l1 = cfg.use_diffusion and batch_idx % cfg.diffusion_sample_freq == 0
@@ -1230,11 +1243,9 @@ def finetune(cfg: FinetuneConfig) -> None:
                 batch=batch,
                 action_tokenizer=action_tokenizer,
                 device_id=device_id,
-                use_l1_regression=cfg.use_l1_regression,
-                use_diffusion=cfg.use_diffusion,
                 use_proprio=cfg.use_proprio,
                 use_film=cfg.use_film,
-                use_rnn_regression= cfg.use_rnn_regression,
+                use_model = cfg.use_model,
                 num_patches=NUM_PATCHES,
                 rnn_prev_state=rnn_prev_state,
                 compute_diffusion_l1=compute_diffusion_l1,

@@ -12,6 +12,9 @@ IGNORE_INDEX = -100
 ACTION_TOKEN_BEGIN_IDX = 31743
 STOP_INDEX = 2  # '</s>'
 
+#Bezier Line Curve
+ACTION_CHUNK_PER_CURVE = 2
+TOKEN_SEQUENCE_LINE = 30
 
 # Defines supported normalization schemes for action and proprioceptive state.
 class NormalizationType(str, Enum):
@@ -29,6 +32,15 @@ LIBERO_CONSTANTS = {
     "PROPRIO_DIM": 8,
     "ACTION_PROPRIO_NORMALIZATION_TYPE": NormalizationType.BOUNDS_Q99,
 }
+
+# Bezier line
+LIBERO_BEZIER_CONSTANTS = {
+    "NUM_ACTIONS_CHUNK": 8,
+    "ACTION_DIM": 7,
+    "PROPRIO_DIM": 8,
+    "ACTION_PROPRIO_NORMALIZATION_TYPE": NormalizationType.BOUNDS_Q99,
+}
+
 
 ALOHA_CONSTANTS = {
     "NUM_ACTIONS_CHUNK": 25,
@@ -70,6 +82,8 @@ elif ROBOT_PLATFORM == "ALOHA":
     constants = ALOHA_CONSTANTS
 elif ROBOT_PLATFORM == "BRIDGE":
     constants = BRIDGE_CONSTANTS
+elif ROBOT_PLATFORM == "LIBERO_B":
+    constants = LIBERO_BEZIER_CONSTANTS #add TODO
 
 # Assign constants to global variables
 NUM_ACTIONS_CHUNK = constants["NUM_ACTIONS_CHUNK"]
