@@ -96,6 +96,7 @@ class DataRead:
 
     def action_to_bezier(self,sequences,epsilon):
         self.line = fitBezierToolBox.fit_beziers(sequences,epsilon)
+        return self.line
 
     def plot_bezier_curves(self, bezier_curves, actions):
         """
@@ -277,33 +278,53 @@ if __name__ == "__main__":
     c = 0
     d = 0
     N = 7
-    for n in range(7):
-        actions = [[Read.action_sequences[t][i + n] for i in range(1)] for t in range(30)]
-        # print(actions)
-        # print(len(actions))
-        dim_actions = [action[0] for action in actions]
-        max_action = dim_actions[np.argmax(dim_actions)]
-        # print("Max action: " + str(max_action))
-        
-        Read.action_to_bezier(actions,0.1 * max_action)
-        
-        
-        # print(Read.line)
-        # print(len(actions))
+    LENGTH = 213
 
-        # print(len(Read.line))
-
-        # Read.plot_bezier_curves(Read.line,actions)
-
-        ratio = 2
-
-        e,f,g,h = Read.DCT_construct(actions,ratio * len(Read.line),Read.gen_bezier_curves,Read.line)
+    actions = [Read.action_sequences[t] for t in range(LENGTH)]
+    line = Read.action_to_bezier(actions,0.1)# 7维拟合
+    print(len(Read.line))
+    # print(Read.line)
+    ratio = 2
+    for i in range (7):
+        actions = [[Read.action_sequences[t][i]] for t in range(LENGTH)]
+        line = [[Read.line[t][0][i],Read.line[t][1][i],Read.line[t][2][i],Read.line[t][3]] for t in range(len(Read.line))]
+        # print(line)
+        e,f,g,h = Read.DCT_construct(actions,ratio * len(Read.line),Read.gen_bezier_curves,line)
         a += e
         b += f
         c += g
         d += h
 
     print(f"All error Rate DCT/Bézier : {(a/b):.6f}, MAE: {(c/d):.6f}")
+
+
+    # for n in range(7): # 一维拟合
+    #     actions = [[Read.action_sequences[t][i + n] for i in range(1)] for t in range(LENGTH)]
+    #     # print(actions)
+    #     # print(len(actions))
+    #     dim_actions = [action[0] for action in actions]
+    #     max_action = dim_actions[np.argmax(dim_actions)]
+    #     # print("Max action: " + str(max_action))
+        
+    #     Read.action_to_bezier(actions,0.1 * max_action)
+        
+        
+    #     # print(Read.line)
+    #     # print(len(actions))
+
+    #     print(len(Read.line))
+
+    #     # Read.plot_bezier_curves(Read.line,actions)
+
+    #     ratio = 15/7
+
+    #     e,f,g,h = Read.DCT_construct(actions,ratio * len(Read.line),Read.gen_bezier_curves,Read.line)
+    #     a += e
+    #     b += f
+    #     c += g
+    #     d += h
+
+    # print(f"All error Rate DCT/Bézier : {(a/b):.6f}, MAE: {(c/d):.6f}")
 
     'All error Rate DCT/Bézier : 9.442504, MAE: 1.927605'
     '总误差更小'
