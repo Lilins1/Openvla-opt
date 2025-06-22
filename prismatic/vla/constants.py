@@ -14,9 +14,10 @@ STOP_INDEX = 2  # '</s>'
 
 #Bezier Line Curve
 ACTION_CHUNK_PER_CURVE = 2
-TOKEN_SEQUENCE_LINE = 10
+TOKEN_SEQUENCE_LINE = 12
 
-BEZIER_CURVES = 1
+# BEZIER_CURVES = 1 # use_bezier_regression_onecurve
+BEZIER_CURVES = 8//ACTION_CHUNK_PER_CURVE # use_bezier_regression_continuous
 ACTION_LENGTH = TOKEN_SEQUENCE_LINE * BEZIER_CURVES
 
 

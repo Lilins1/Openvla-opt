@@ -35,22 +35,22 @@ torchrun --standalone --nnodes 1 --nproc-per-node 1 vla-scripts/finetune_RNN.py 
   --num_images_in_input 2 \
   --use_proprio False \
   --batch_size 1 \
-  --grad_accumulation_steps 12\
-  --learning_rate 5e-4 \
+  --grad_accumulation_steps 16\
+  --learning_rate 4e-4 \
   --num_steps_before_decay 100000 \
   --max_steps 200005 \
   --save_freq 10000 \
   --save_latest_checkpoint_only False \
   --image_aug True \
-  --lora_rank 48 \
+  --lora_rank 80 \
   --wandb_project vla-libero-Bezierfit \
   --wandb_entity chu2002-kth-royal-institute-of-technology \
   --shuffle_buffer_size 100000 \
-  --use_model use_bezier_regression_onecurve\
+  --use_model use_bezier_regression_continuous\
   --finetune_lora True\
   --save_vla False\
   --rnn_in_batch True\
-  --run_id_note Bezier1Curve_libero_acc8
+  --run_id_note Bezier1Curve_libero_acc16
 
 ## libero Bezier
 torchrun --standalone --nnodes 1 --nproc-per-node 1 vla-scripts/finetune_RNN.py \

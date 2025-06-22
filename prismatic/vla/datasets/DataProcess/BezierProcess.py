@@ -84,7 +84,7 @@ class fitBezierToolBox:
         return left_curves + right_curves
 
     @staticmethod
-    def compute_curve_loss(combined_curve, points, pt_dim):
+    def compute_curve_loss(combined_curve, points, pt_dim, bias = 0):
         """
         combined_curve: Tensor of shape (pt_dim*3 + 1,), last element is segment length
         points: Tensor of shape (seg_len, D)
@@ -96,13 +96,14 @@ class fitBezierToolBox:
         # length = combined_curve[-1]
         N = points.shape[0]
         t = torch.linspace(0, 1, N, device=points.device)
+        t += 1 - bias
         # generate bezier points: implement bezier formula directly or via toolbox
         # Assuming fitBezierToolBox.bezier_point accepts control tuple and t
         bezier_points = fitBezierToolBox.bezier_point((P0, P1, P2,combined_curve[-1]), t)
         # fitBezierToolBox.Debug("bezier_points",bezier_points)
         # fitBezierToolBox.Debug("points",points)
 
-        error = torch.sum(torch.norm(bezier_points - points, dim=1))
+        error = torch.mean(torch.norm(bezier_points - points, dim=1))
         return error
 
     @staticmethod
@@ -119,20 +120,24 @@ class fitBezierToolBox:
             sample_curves = combined_curves[i]  # (seq_len, 3*pt_dim+1)
             points = batch_points[i]
             sample_error = 0.0
+            org_error = 0.0
             consumed = 0
             for curve in sample_curves:
-                seg_len = int(curve[-1].item())
-                seg_pts = points[consumed:consumed+seg_len]
+                seg_len = curve[-1]
+                seg_len = int(seg_len.item() + 1)
+                seg_pts = points[int(consumed):int(consumed + seg_len)]
                 real_len = seg_pts.shape[0]
-                if real_len < seg_len:
-                    pad = torch.zeros((seg_len-real_len, points.shape[1]), device=points.device)
+                if real_len < int(seg_len):
+                    pad = torch.zeros((int(consumed+seg_len)-int(consumed)-real_len, points.shape[1]), device=points.device)
                     seg_pts = torch.cat([seg_pts, pad], dim=0)
-                sample_error += fitBezierToolBox.compute_curve_loss(curve, seg_pts, pt_dim)
+                bias = consumed - int(consumed)
+                ratio = (2 ** (0.5 *(1 - 2 * ((curve[-1]+1)/TOKEN_SEQUENCE_LINE)))) # length control
+                compute_curve_loss = fitBezierToolBox.compute_curve_loss(curve, seg_pts, pt_dim , bias)
+                org_error += compute_curve_loss
+                sample_error += compute_curve_loss * ratio
                 consumed += seg_len
-            ratio = (2 ** (0.5 *(1 - 2 * (seg_len/TOKEN_SEQUENCE_LINE)))) # length control
-            sample_error = sample_error / consumed if consumed > 0 else 0.0
-            batch_errors.append(sample_error * ratio )
-            batch_errors_org.append(sample_error)
+            batch_errors.append(sample_error)
+            batch_errors_org.append(org_error)
         return torch.mean(torch.stack(batch_errors)),torch.mean(torch.stack(batch_errors_org))
     
     @staticmethod
@@ -149,6 +154,25 @@ class fitBezierToolBox:
         # 再对 batch 维度求平均
         avg_length = per_sample.float().mean()      # scalar
         return avg_length
+    
+    @staticmethod
+    def curves_length_avg(combined_curves):
+        """
+        combined_curves: Tensor of shape (B, T, 3*pt_dim + 1),
+                        最后一维的最后一个元素是该段的长度预测（float）
+        返回:
+        avg_seg_len: Tensor scalar，batch 中所有段的平均预测长度
+        """
+        # 1) 取出所有 batch、所有时间步的最后一列 （不要转换成 int）
+        lengths = combined_curves[..., -1]   # shape (B, T), float 张量
+
+        # 2) 先对时间维度求平均 => 每个样本上的平均段长
+        per_sample_avg = lengths.mean(dim=1)  # shape (B,)
+
+        # 3) 再对 batch 维度求平均 => batch 上的平均段长
+        avg_seg_len = per_sample_avg.mean()   # scalar 张量
+
+        return avg_seg_len
 
 
     @staticmethod

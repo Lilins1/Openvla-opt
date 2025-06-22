@@ -44,6 +44,7 @@ from prismatic.models.MLP_RNN_action import MLP_RNN_ActionHead
 
 from prismatic.models.Bezier_MLP_Action import Bezier_MLP_Action
 from prismatic.models.Bezier_MLP_Action_b import Bezier_MLP_Action_b
+from prismatic.models.Bezier_MLP_Action_continuous import Bezier_MLP_Action_continuous
 
 from prismatic.models.backbones.llm.prompting import PurePromptBuilder
 from prismatic.models.film_vit_wrapper import FiLMedPrismaticVisionBackbone
@@ -98,6 +99,7 @@ class FinetuneConfig:
     use_rnn_regression: bool = True
     use_bezier_regression: bool = False
     use_bezier_regression_onecurve:bool = False
+    use_bezier_regression_continuous:bool = False
 
     use_model: str = 'use_bezier_regression'
 
@@ -532,6 +534,9 @@ def run_forward_pass(
         Debug("in labels: " + str(batch["labels"]))
         Debug("in input_ids: " + str(batch["input_ids"]))
         Debug("in attention_mask: " + str(batch["attention_mask"]))
+    elif use_model == 'use_bezier_regression_continuous':
+        token_padding_length = NUM_ACTIONS_CHUNK + 1
+        batch["labels"], batch["input_ids"], batch["attention_mask"] = trim_batch_after_eos(batch["labels"], batch["input_ids"], batch["attention_mask"],token_padding_length)
 
 
     # VLA forward pass
@@ -610,6 +615,32 @@ def run_forward_pass(
             ratio = (2 ** (0.5 *(1 - 2 * (avg_length/TOKEN_SEQUENCE_LINE))))
             Debug("ratio:", ratio)
             loss = out_put_curves_loss
+
+        if use_model == 'use_bezier_regression_continuous':
+
+            ground_truth_batch = ground_truth_actions
+
+            actions_hidden_states = (
+            text_hidden_states[current_action_mask | next_actions_mask]
+            .reshape(batch_size, token_padding_length, -1)
+            .to(torch.bfloat16)
+            )  # (B, act_chunk_len, D)
+            # Predict action
+            out_put_curves = action_head.module.predict_action(actions_hidden_states)
+            Debug("out_put_curves: "+str(out_put_curves))
+            
+
+            # 再传给 compute_loss
+            out_put_curves_loss, batch_errors_org = BezierProcess.fitBezierToolBox.compute_loss(out_put_curves, ground_truth_actions,ACTION_DIM)
+            Debug("out_put_curves_loss:", out_put_curves_loss)
+            avg_length = BezierProcess.fitBezierToolBox.curves_length_avg(out_put_curves)
+            Debug("avg_length:", avg_length)
+            ratio = (2 ** (0.5 *(1 - 2 * (avg_length/TOKEN_SEQUENCE_LINE))))
+            Debug("ratio:", ratio)
+            loss = out_put_curves_loss
+
+
+
 
         if use_model == 'use_bezier_regression':
 
@@ -740,7 +771,7 @@ def run_forward_pass(
 
         # Get detailed L1 losses for logging
         should_log_l1_loss = not use_model == 'use_diffusion' or (use_model == 'use_diffusion' and compute_diffusion_l1)
-        if should_log_l1_loss and not (use_model == "use_bezier_regression" or use_model == "use_bezier_regression_onecurve"):
+        if should_log_l1_loss and not (use_model == "use_bezier_regression" or use_model == "use_bezier_regression_onecurve" or use_model == "use_bezier_regression_continuous"):
             ground_truth_curr_action = ground_truth_actions[:, 0]
             predicted_curr_action = predicted_actions[:, 0]
             ground_truth_next_actions = ground_truth_actions[:, 1:]
@@ -762,7 +793,7 @@ def run_forward_pass(
                     }
                 )
             
-            if use_model == "use_bezier_regression_onecurve":
+            if use_model == "use_bezier_regression_onecurve" or use_model == "use_bezier_regression_continuous":
                 metrics.update(
                     {
                         "out_put_curves_loss": batch_errors_org.item(),
@@ -1120,6 +1151,7 @@ def finetune(cfg: FinetuneConfig) -> None:
     cfg.use_diffusion = (cfg.use_model == 'use_diffusion') 
     cfg.use_bezier_regression = (cfg.use_model == 'use_bezier_regression') 
     cfg.use_bezier_regression_onecurve = (cfg.use_model == 'use_bezier_regression_onecurve') 
+    cfg.use_bezier_regression_continuous = (cfg.use_model == 'use_bezier_regression_continuous') 
     cfg.use_rnn_regression = (cfg.use_model == 'use_rnn_regression') 
 
     # Trim trailing forward slash ('/') in VLA path if it exists
@@ -1275,7 +1307,16 @@ def finetune(cfg: FinetuneConfig) -> None:
             {"input_dim": vla.module.llm_dim, "action_dim": ACTION_DIM},
             to_bf16=True,
         )
-        
+    
+    if cfg.use_bezier_regression_continuous:
+        action_head = init_module(
+            Bezier_MLP_Action_continuous,
+            "mlp_rnn_action_head",
+            cfg,
+            device_id,
+            {"input_dim": vla.module.llm_dim, "action_dim": ACTION_DIM},
+            to_bf16=True,
+        )
 
     # If applicable, instantiate diffusion action head and noisy action projector
     if cfg.use_diffusion:
