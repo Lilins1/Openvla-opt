@@ -25,6 +25,32 @@ torchrun --standalone --nnodes 1 --nproc-per-node X vla-scripts/finetune.py \
   --wandb_project "YOUR_WANDB_PROJECT" \
   --run_id_note parallel_dec--25_acts_chunk--continuous_acts--L1_regression--3rd_person_img--left_right_wrist_imgs--proprio_state--film
 
+## libero Bezier one curve
+torchrun --standalone --nnodes 1 --nproc-per-node 1 vla-scripts/finetune_RNN.py \
+  --vla_path openvla/openvla-7b \
+  --data_root_dir /mnt/disk2/ruizhe/Projects/openvlaData/Model/Libero/modified_libero_rlds \
+  --dataset_name libero_spatial_no_noops \
+  --run_root_dir /mnt/disk2/ruizhe/Projects/openvlaData/BezierAndDCT/Bezier/log/libero_spatial_no_noops/lora_train \
+  --use_film False \
+  --num_images_in_input 2 \
+  --use_proprio False \
+  --batch_size 1 \
+  --grad_accumulation_steps 12\
+  --learning_rate 5e-4 \
+  --num_steps_before_decay 100000 \
+  --max_steps 200005 \
+  --save_freq 10000 \
+  --save_latest_checkpoint_only False \
+  --image_aug True \
+  --lora_rank 48 \
+  --wandb_project vla-libero-Bezierfit \
+  --wandb_entity chu2002-kth-royal-institute-of-technology \
+  --shuffle_buffer_size 100000 \
+  --use_model use_bezier_regression_onecurve\
+  --finetune_lora True\
+  --save_vla False\
+  --rnn_in_batch True\
+  --run_id_note Bezier1Curve_libero_acc8
 
 ## libero Bezier
 torchrun --standalone --nnodes 1 --nproc-per-node 1 vla-scripts/finetune_RNN.py \
@@ -36,22 +62,22 @@ torchrun --standalone --nnodes 1 --nproc-per-node 1 vla-scripts/finetune_RNN.py 
   --num_images_in_input 2 \
   --use_proprio False \
   --batch_size 1 \
-  --grad_accumulation_steps 8\
+  --grad_accumulation_steps 16\
   --learning_rate 5e-4 \
   --num_steps_before_decay 100000 \
   --max_steps 200005 \
   --save_freq 10000 \
   --save_latest_checkpoint_only False \
   --image_aug True \
-  --lora_rank 64 \
+  --lora_rank 96 \
   --wandb_project vla-libero-Bezierfit \
   --wandb_entity chu2002-kth-royal-institute-of-technology \
-  --shuffle_buffer_size 10000 \
+  --shuffle_buffer_size 100000 \
   --use_model use_bezier_regression\
   --finetune_lora True\
   --save_vla False\
   --rnn_in_batch True\
-  --run_id_note Bezier4Curve_libero_acc8
+  --run_id_note Bezier4Curve_libero_acc16
   
 
 ## libero rnn

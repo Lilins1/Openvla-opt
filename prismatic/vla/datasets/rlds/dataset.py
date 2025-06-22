@@ -16,7 +16,7 @@ import tensorflow as tf
 import tensorflow_datasets as tfds
 
 from prismatic.overwatch import initialize_overwatch
-from prismatic.vla.constants import ACTION_DIM, ACTION_PROPRIO_NORMALIZATION_TYPE, ACTION_TOKEN_BEGIN_IDX, IGNORE_INDEX, NUM_ACTIONS_CHUNK, PROPRIO_DIM, STOP_INDEX
+from prismatic.vla.constants import ACTION_DIM, ACTION_PROPRIO_NORMALIZATION_TYPE, ACTION_TOKEN_BEGIN_IDX, IGNORE_INDEX, NUM_ACTIONS_CHUNK, PROPRIO_DIM, STOP_INDEX,TOKEN_SEQUENCE_LINE,ACTION_LENGTH,Debug
 from prismatic.vla.datasets.rlds import obs_transforms, traj_transforms
 from prismatic.vla.datasets.rlds.utils import goal_relabeling, task_augmentation
 from prismatic.vla.datasets.rlds.utils.data_utils import (
@@ -550,7 +550,7 @@ def make_interleaved_dataset(
         )
         # 🔍 加入调试语句，检查轨迹长度
         def fix_trajectory_length(trajectory):
-            target_len = 120
+            target_len = ACTION_LENGTH
 
             def pad_or_truncate(t):
                 seq_len = tf.shape(t)[0]
@@ -565,7 +565,8 @@ def make_interleaved_dataset(
 
                 def trunc():
                     return t[:target_len]
-
+                if seq_len < target_len:
+                    Debug("seq_len < target_len pad: True")
                 return tf.cond(seq_len < target_len, pad, trunc)
 
             return tf.nest.map_structure(pad_or_truncate, trajectory)

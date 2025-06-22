@@ -114,6 +114,7 @@ class fitBezierToolBox:
         """
         batch_size, seq_len, _ = combined_curves.shape
         batch_errors = []
+        batch_errors_org = []
         for i in range(batch_size):
             sample_curves = combined_curves[i]  # (seq_len, 3*pt_dim+1)
             points = batch_points[i]
@@ -128,10 +129,28 @@ class fitBezierToolBox:
                     seg_pts = torch.cat([seg_pts, pad], dim=0)
                 sample_error += fitBezierToolBox.compute_curve_loss(curve, seg_pts, pt_dim)
                 consumed += seg_len
+            ratio = (2 ** (0.5 *(1 - 2 * (seg_len/TOKEN_SEQUENCE_LINE)))) # length control
             sample_error = sample_error / consumed if consumed > 0 else 0.0
-            batch_errors.append(sample_error)
-        return torch.mean(torch.stack(batch_errors))
+            batch_errors.append(sample_error * ratio )
+            batch_errors_org.append(sample_error)
+        return torch.mean(torch.stack(batch_errors)),torch.mean(torch.stack(batch_errors_org))
     
+    @staticmethod
+    def curves_length(combined_curves):
+        """
+        combined_curves: Tensor of shape (B, T, 3*pt_dim + 1),
+                        最后一维的最后一个元素是该片段的长度预测（float/int）
+        返回：一个标量张量——batch 中每个样本曲线长度的平均值。
+        """
+        # 取出所有 batch、所有时间步的最后一列，并转成整数
+        lengths = combined_curves[..., -1].int()    # shape (B, T)
+        # 先对时间维度求和，每个样本自己的总长度
+        per_sample = lengths.sum(dim=1)             # shape (B,)
+        # 再对 batch 维度求平均
+        avg_length = per_sample.float().mean()      # scalar
+        return avg_length
+
+
     @staticmethod
     def make_ground_truth_tensors(ground_truth_curves, device, pt_dim, seq_len):
         """

@@ -14,9 +14,20 @@ STOP_INDEX = 2  # '</s>'
 
 #Bezier Line Curve
 ACTION_CHUNK_PER_CURVE = 2
-TOKEN_SEQUENCE_LINE = 30
+TOKEN_SEQUENCE_LINE = 10
+
+BEZIER_CURVES = 1
+ACTION_LENGTH = TOKEN_SEQUENCE_LINE * BEZIER_CURVES
+
 
 DEBUG = False
+
+def Debug(a:str,b = None):
+    if DEBUG == True:
+        if b:
+            print(a + ": " + str(b))
+        else:
+            print(a)
 
 # Defines supported normalization schemes for action and proprioceptive state.
 class NormalizationType(str, Enum):

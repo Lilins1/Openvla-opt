@@ -43,6 +43,7 @@ from prismatic.models.action_heads import DiffusionActionHead, L1RegressionActio
 from prismatic.models.MLP_RNN_action import MLP_RNN_ActionHead
 
 from prismatic.models.Bezier_MLP_Action import Bezier_MLP_Action
+from prismatic.models.Bezier_MLP_Action_b import Bezier_MLP_Action_b
 
 from prismatic.models.backbones.llm.prompting import PurePromptBuilder
 from prismatic.models.film_vit_wrapper import FiLMedPrismaticVisionBackbone
@@ -65,7 +66,9 @@ from prismatic.vla.constants import (
     PROPRIO_DIM,
     ACTION_CHUNK_PER_CURVE,
     TOKEN_SEQUENCE_LINE,
-    DEBUG
+    BEZIER_CURVES,
+    ACTION_LENGTH,
+    Debug
 )
 from prismatic.vla.datasets.datasetsSequence import RLDSBatchTransform, RLDSDataset
 from prismatic.vla.datasets.rlds.utils.data_utils import save_dataset_statistics
@@ -94,6 +97,7 @@ class FinetuneConfig:
     use_diffusion: bool = False                      # If True, trains continuous action head with diffusion modeling objective (DDIM)
     use_rnn_regression: bool = True
     use_bezier_regression: bool = False
+    use_bezier_regression_onecurve:bool = False
 
     use_model: str = 'use_bezier_regression'
 
@@ -144,12 +148,7 @@ class FinetuneConfig:
 
     # fmt: on
 
-def Debug(a:str,b = None):
-    if DEBUG == True:
-        if b:
-            print(a + ": " + str(b))
-        else:
-            print(a)
+
 
  
 
@@ -450,9 +449,9 @@ def run_forward_pass(
     # Get ground-truth action labels
     actions = batch["actions"]  # 假设 shape=[B, T, ...]
     if use_model == 'use_bezier_regression':
-        actions = pad_or_truncate(actions, (NUM_ACTIONS_CHUNK/ACTION_CHUNK_PER_CURVE) * TOKEN_SEQUENCE_LINE)
+        actions = pad_or_truncate(actions, (NUM_ACTIONS_CHUNK//ACTION_CHUNK_PER_CURVE) * TOKEN_SEQUENCE_LINE)
     else:
-        actions = pad_or_truncate(actions, NUM_ACTIONS_CHUNK)
+        actions = pad_or_truncate(actions, NUM_ACTIONS_CHUNK * ACTION_DIM)
     ground_truth_actions = actions.to(device_id).to(torch.bfloat16)
 
     
@@ -473,7 +472,7 @@ def run_forward_pass(
     # print("in input_ids len: " + str(batch["input_ids"]))
     # print("in attention_mask len: " + str(batch["attention_mask"]))
 
-    def trim_batch_after_eos(labels_batch, input_ids_batch, attention_mask_batch):
+    def trim_batch_after_eos(labels_batch, input_ids_batch, attention_mask_batch,keep_length):
         new_labels = []
         new_input_ids = []
         new_attention_masks = []
@@ -487,7 +486,7 @@ def run_forward_pass(
 
             trimmed_L, trimmed_I, trimmed_M = [], [], []
             started = False
-            keep = NUM_ACTIONS_CHUNK
+            keep = keep_length
 
             for tok, iid, mask in zip(L, I, M):
                 if not started:
@@ -507,7 +506,7 @@ def run_forward_pass(
             # # 截断或填充到原始长度
             # while len(trimmed_L) < seq_len:
             #     trimmed_L.append(-100)
-            #     trimmed_I.append(PAD_TOKEN_ID)
+            #     trimmed_I.append(PAD_TOKEN_ID) 
             #     trimmed_M.append(0)
 
             new_labels.append(torch.tensor(trimmed_L, dtype=labels.dtype, device=labels.device))
@@ -521,11 +520,18 @@ def run_forward_pass(
         return new_labels, new_input_ids, new_attention_masks
 
 
-    
-    batch["labels"], batch["input_ids"], batch["attention_mask"] = trim_batch_after_eos(batch["labels"], batch["input_ids"], batch["attention_mask"])
-    Debug("in labels: " + str(batch["labels"]))
-    Debug("in input_ids: " + str(batch["input_ids"]))
-    Debug("in attention_mask: " + str(batch["attention_mask"]))
+    if use_model == 'use_bezier_regression':
+        token_padding_length = NUM_ACTIONS_CHUNK
+        batch["labels"], batch["input_ids"], batch["attention_mask"] = trim_batch_after_eos(batch["labels"], batch["input_ids"], batch["attention_mask"],token_padding_length)
+        Debug("in labels: " + str(batch["labels"]))
+        Debug("in input_ids: " + str(batch["input_ids"]))
+        Debug("in attention_mask: " + str(batch["attention_mask"]))
+    elif use_model == 'use_bezier_regression_onecurve':
+        token_padding_length = ACTION_DIM*(BEZIER_CURVES * ACTION_CHUNK_PER_CURVE + 1)
+        batch["labels"], batch["input_ids"], batch["attention_mask"] = trim_batch_after_eos(batch["labels"], batch["input_ids"], batch["attention_mask"],token_padding_length)
+        Debug("in labels: " + str(batch["labels"]))
+        Debug("in input_ids: " + str(batch["input_ids"]))
+        Debug("in attention_mask: " + str(batch["attention_mask"]))
 
 
     # VLA forward pass
@@ -552,7 +558,7 @@ def run_forward_pass(
     Debug("next_actions_mask: "+str(next_actions_mask))
 
     # Compute metrics for discrete action representation (next-token prediction)
-    if not (use_model is not None):
+    if use_model is None:
         loss = output.loss
         predicted_token_ids = output.logits[:, num_patches:-1].argmax(dim=2)
         curr_action_accuracy = compute_token_accuracy(
@@ -585,6 +591,25 @@ def run_forward_pass(
         # Get hidden states for action portion of response
         batch_size = batch["input_ids"].shape[0]
 
+        if use_model == 'use_bezier_regression_onecurve':
+
+            actions_hidden_states = (
+            text_hidden_states[current_action_mask | next_actions_mask]
+            .reshape(batch_size, token_padding_length, -1)
+            .to(torch.bfloat16)
+            )  # (B, act_chunk_len, D)
+            # Predict action
+            out_put_curves = action_head.module.predict_action(actions_hidden_states)
+            Debug("out_put_curves: "+str(out_put_curves))
+            
+            # 再传给 compute_loss
+            out_put_curves_loss, batch_errors_org = BezierProcess.fitBezierToolBox.compute_loss(out_put_curves, ground_truth_actions,ACTION_DIM)
+            Debug("out_put_curves_loss:", out_put_curves_loss)
+            avg_length = BezierProcess.fitBezierToolBox.curves_length(out_put_curves)
+            Debug("avg_length:", avg_length)
+            ratio = (2 ** (0.5 *(1 - 2 * (avg_length/TOKEN_SEQUENCE_LINE))))
+            Debug("ratio:", ratio)
+            loss = out_put_curves_loss
 
         if use_model == 'use_bezier_regression':
 
@@ -631,7 +656,7 @@ def run_forward_pass(
 
 
             # 再传给 compute_loss
-            out_put_curves_loss = BezierProcess.fitBezierToolBox.compute_loss(out_put_curves, ground_truth_actions,ACTION_DIM)
+            out_put_curves_loss,batch_errors_org = BezierProcess.fitBezierToolBox.compute_loss(out_put_curves, ground_truth_actions,ACTION_DIM)
             Debug("out_put_curves_loss:", out_put_curves_loss)
             loss = out_put_curves_loss
 
@@ -715,7 +740,7 @@ def run_forward_pass(
 
         # Get detailed L1 losses for logging
         should_log_l1_loss = not use_model == 'use_diffusion' or (use_model == 'use_diffusion' and compute_diffusion_l1)
-        if should_log_l1_loss and not use_model == "use_bezier_regression":
+        if should_log_l1_loss and not (use_model == "use_bezier_regression" or use_model == "use_bezier_regression_onecurve"):
             ground_truth_curr_action = ground_truth_actions[:, 0]
             predicted_curr_action = predicted_actions[:, 0]
             ground_truth_next_actions = ground_truth_actions[:, 1:]
@@ -729,12 +754,22 @@ def run_forward_pass(
                 }
             )
         else:
-            metrics.update(
-                {
-                    "out_put_curves_loss": out_put_curves_loss.item(),
-                    "predict_curve_length_loss": predict_curve_length_loss.item()
-                }
-            )
+            if use_model == "use_bezier_regression":
+                metrics.update(
+                    {
+                        "out_put_curves_loss": out_put_curves_loss.item(),
+                        "predict_curve_length_loss": predict_curve_length_loss.item()
+                    }
+                )
+            
+            if use_model == "use_bezier_regression_onecurve":
+                metrics.update(
+                    {
+                        "out_put_curves_loss": batch_errors_org.item(),
+                        "avg_length": avg_length,
+                        "ratio": ratio,
+                    }
+                )
 
     # Return both the loss tensor (with gradients) and the metrics dictionary (with detached values)
     return loss, metrics, rnn_prev_state
@@ -1084,6 +1119,7 @@ def finetune(cfg: FinetuneConfig) -> None:
     cfg.use_l1_regression = (cfg.use_model == 'use_l1_regression') 
     cfg.use_diffusion = (cfg.use_model == 'use_diffusion') 
     cfg.use_bezier_regression = (cfg.use_model == 'use_bezier_regression') 
+    cfg.use_bezier_regression_onecurve = (cfg.use_model == 'use_bezier_regression_onecurve') 
     cfg.use_rnn_regression = (cfg.use_model == 'use_rnn_regression') 
 
     # Trim trailing forward slash ('/') in VLA path if it exists
@@ -1223,6 +1259,16 @@ def finetune(cfg: FinetuneConfig) -> None:
     if cfg.use_bezier_regression:
         action_head = init_module(
             Bezier_MLP_Action,
+            "mlp_rnn_action_head",
+            cfg,
+            device_id,
+            {"input_dim": vla.module.llm_dim, "action_dim": ACTION_DIM},
+            to_bf16=True,
+        )
+        
+    if cfg.use_bezier_regression_onecurve:
+        action_head = init_module(
+            Bezier_MLP_Action_b,
             "mlp_rnn_action_head",
             cfg,
             device_id,
@@ -1393,6 +1439,12 @@ def finetune(cfg: FinetuneConfig) -> None:
         "curr_action_l1_loss": deque(maxlen=cfg.grad_accumulation_steps),
         "next_actions_accuracy": deque(maxlen=cfg.grad_accumulation_steps),
         "next_actions_l1_loss": deque(maxlen=cfg.grad_accumulation_steps),
+        "out_put_curves_loss": deque(maxlen=cfg.grad_accumulation_steps),
+        "predict_curve_length_loss": deque(maxlen=cfg.grad_accumulation_steps),
+        "out_put_curves_loss": deque(maxlen=cfg.grad_accumulation_steps),
+        "avg_length": deque(maxlen=cfg.grad_accumulation_steps),
+        "ratio": deque(maxlen=cfg.grad_accumulation_steps),
+
     }
 
     ForCount = 0
@@ -1451,6 +1503,9 @@ def finetune(cfg: FinetuneConfig) -> None:
             normalized_loss.backward()
 
             # Store recent train metrics
+            # for metric_name, value in metrics.items():
+            #     if metric_name in recent_metrics:
+            #         recent_metrics[metric_name].append(value)
             for metric_name, value in metrics.items():
                 if metric_name in recent_metrics:
                     recent_metrics[metric_name].append(value)
