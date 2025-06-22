@@ -19,15 +19,11 @@ class Bezier_MLP_Action(nn.Module):
                  dropout=0.1):
         super(Bezier_MLP_Action, self).__init__()
 
-        # Front-end MLP feature extractor
-        self.mlp = nn.Sequential(
-            nn.Linear(input_dim * ACTION_CHUNK_PER_CURVE, mlp_hidden_size),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(mlp_hidden_size, mlp_hidden_size),
-            nn.ReLU()
-        )
-        
+        self.fc1 = nn.Linear(input_dim * ACTION_CHUNK_PER_CURVE, mlp_hidden_size)
+        self.fc2 = nn.Linear(mlp_hidden_size, mlp_hidden_size)
+        self.relu = nn.ReLU()
+        self.dropout = nn.Dropout(dropout)
+
         # Decoder MLP: three linear layers
         total_output = continuous_dim + token_seq_len
         self.decoder = nn.Sequential(
@@ -40,75 +36,24 @@ class Bezier_MLP_Action(nn.Module):
             nn.Linear(decoder_hidden_size//2, total_output)
         )
 
-        self.placeholder = nn.Parameter(torch.randn(1, input_dim), requires_grad=True)#用于预测第一个P0的时候进行拼接，
-
+        self.placeholder = nn.Parameter(torch.randn(1, input_dim), requires_grad=True)  # 用于预测第一个P0的时候进行拼接
 
         # Store dims
         self.continuous_dim = continuous_dim
         self.token_seq_len = token_seq_len
 
-    # def forward(self, x):
-    #     # Extract features
-    #     feats = self.mlp(x)
-    #     # Decode
-    #     out = self.decoder(feats)
-    #     line = []
-    #     for seg in out:
-    #         palceholder = seg[:self.continuous_dim/ACTION_CHUNK_PER_CURVE]
-    #         P1 = seg[:self.continuous_dim/ACTION_CHUNK_PER_CURVE]
-    #         P2 = seg[self.continuous_dim/ACTION_CHUNK_PER_CURVE:self.continuous_dim]
-    #         token_logits = seg[self.continuous_dim:]
-    #         line_length = torch.argmax(token_logits, dim=-1) + 1
-
-    #         line.append([palceholder,P1,P2,line_length])
-
-    #     return line
-    
     def forward(self, x):
         """
         x: Tensor(shape=(N, hidden_dim))
         returns: Tensor(shape=(N, total_dim))
         """
-        feats = self.mlp(x)           # (N, decoder_input_dim)
-        out   = self.decoder(feats)   # (N, total_dim)
+        residual = self.fc1(x)
+        out = self.relu(residual)
+        out = self.dropout(out)
+        out = self.fc2(out)
+        feats = self.relu(out + residual)
+        out = self.decoder(feats)
         return out
-
-    # def predict_action(self, actions_hidden_states):
-    #     B = actions_hidden_states.size(0)
-    #     seq_len = NUM_ACTIONS_CHUNK // ACTION_CHUNK_PER_CURVE
-    #     hidden_dim = actions_hidden_states.size(-1)
-    #     out_len = self.continuous_dim + self.token_seq_len
-
-    #     # 1) reshape 到 (B * seq_len, hidden_dim)
-    #     x = actions_hidden_states.view(B, seq_len, -1)
-    #     x = x.reshape(B * seq_len, hidden_dim * ACTION_CHUNK_PER_CURVE)
-
-    #     # 2) 一次性前向
-    #     out = self.forward(x)  # (B*seq_len, total_dim)
-    #     out = out.view(B,seq_len,-1)
-    #     out = out.reshape(B,seq_len,out_len)
-
-    #     # 3) 拆分出控制点和平移长度 logits
-    #     cd = self.continuous_dim
-    #     # 每段 Bézier 输出的连续维度是 continuous_dim，
-    #     # 其中前三份分别是 P0, P1, P2，每份长度 continuous_dim / 3
-    #     pt_dim = cd // 2
-
-    #     out_put_curves  =[]
-    #     for out_seg in out:
-    #         P0 = torch.zeros_like(out_seg[0, :pt_dim])  # 初始化为 0
-    #         curve = []
-    #         for seg in out_seg:
-    #             P1 = seg[0          : pt_dim]
-    #             P2 = seg[pt_dim     : 2*pt_dim]
-    #             P0 = P2
-    #             token_logits = seg[cd:]     # (B*seq_len, num_length_classes)
-    #             # 4) 计算每段的长度预测
-    #             lengths = torch.argmax(token_logits, dim=-1) + 1  # (B*seq_len,)
-    #             curve.append([P0, P1, P2,lengths])
-    #         out_put_curves.append(curve)
-                
-    #     return out_put_curves
 
     def predict_action(self, actions_hidden_states):
         B = actions_hidden_states.size(0)

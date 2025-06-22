@@ -1267,8 +1267,9 @@ def finetune(cfg: FinetuneConfig) -> None:
     # if cfg.use_l1_regression or cfg.use_diffusion or cfg.use_rnn_regression:
         # trainable_params += [param for param in action_head.parameters() if param.requires_grad]# 训练action_head
         # print(f"add action_head: {sum(p.numel() for p in trainable_params)}")
-    trainable_params += [param for param in action_head.parameters() if param.requires_grad]# 训练action_head
-    print(f"add action_head: {sum(p.numel() for p in trainable_params)}")
+    action_head_params = [param for param in action_head.parameters() if param.requires_grad]
+    trainable_params += action_head_params
+    print(f"add action_head: {sum(p.numel() for p in action_head_params)}")
     if cfg.use_diffusion:
         trainable_params += [param for param in noisy_action_projector.parameters() if param.requires_grad]
     if cfg.use_proprio:
