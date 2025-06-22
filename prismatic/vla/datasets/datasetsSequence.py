@@ -19,7 +19,7 @@ from prismatic.models.backbones.llm.prompting import PromptBuilder
 from prismatic.models.backbones.vision import ImageTransform
 from prismatic.util.data_utils import tree_map
 from prismatic.vla.action_tokenizer import ActionTokenizer
-from prismatic.vla.constants import ACTION_DIM, ACTION_PROPRIO_NORMALIZATION_TYPE, ACTION_TOKEN_BEGIN_IDX, IGNORE_INDEX, NUM_ACTIONS_CHUNK, PROPRIO_DIM, STOP_INDEX
+from prismatic.vla.constants import ACTION_DIM, ACTION_PROPRIO_NORMALIZATION_TYPE, ACTION_TOKEN_BEGIN_IDX, IGNORE_INDEX, NUM_ACTIONS_CHUNK, PROPRIO_DIM, STOP_INDEX,TOKEN_SEQUENCE_LINE,ACTION_CHUNK_PER_CURVE
 from prismatic.vla.datasets.rlds import make_interleaved_dataset, make_single_dataset
 from prismatic.vla.datasets.rlds.oxe import OXE_NAMED_MIXTURES, get_oxe_dataset_kwargs_and_weights
 
@@ -141,10 +141,11 @@ class RLDSDataset(IterableDataset):
             load_language=True,
             action_proprio_normalization_type=ACTION_PROPRIO_NORMALIZATION_TYPE,
         )
-        if curve_fit_mode == True:
-            actions_chunk = NUM_ACTIONS_CHUNK-1
+        if curve_fit_mode == False:
+            actions_chunk = NUM_ACTIONS_CHUNK - 1
         else :
-            actions_chunk = 300
+            actions_chunk = TOKEN_SEQUENCE_LINE * NUM_ACTIONS_CHUNK//ACTION_CHUNK_PER_CURVE - 1
+            print("actions_chunk: " + str(actions_chunk))
         rlds_config = dict(
             traj_transform_kwargs=dict(
                 window_size=1,                                      # If we wanted to feed / predict more than one step
@@ -188,6 +189,20 @@ class RLDSDataset(IterableDataset):
 
     def make_dataset(self, rlds_config):
         return make_interleaved_dataset(**rlds_config)
+    
+    # def make_interleaved_dataset(
+    #     dataset_kwargs_list: List[Dict],
+    #     sample_weights: Optional[List[float]] = None,
+    #     *,
+    #     train: bool,
+    #     shuffle_buffer_size: int,
+    #     traj_transform_kwargs: Optional[Dict] = None,
+    #     frame_transform_kwargs: Optional[Dict] = None,
+    #     batch_size: Optional[int] = None,
+    #     balance_weights: bool = False,
+    #     traj_transform_threads: Optional[int] = None,
+    #     traj_read_threads: Optional[int] = None,
+    # ) -> dl.DLataset:
 
     def __iter__(self) -> Dict[str, Any]:
         for rlds_batch in self.dataset.as_numpy_iterator():

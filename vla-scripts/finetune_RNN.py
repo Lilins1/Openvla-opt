@@ -64,6 +64,8 @@ from prismatic.vla.constants import (
     NUM_ACTIONS_CHUNK,
     PROPRIO_DIM,
     ACTION_CHUNK_PER_CURVE,
+    TOKEN_SEQUENCE_LINE,
+    DEBUG
 )
 from prismatic.vla.datasets.datasetsSequence import RLDSBatchTransform, RLDSDataset
 from prismatic.vla.datasets.rlds.utils.data_utils import save_dataset_statistics
@@ -125,6 +127,7 @@ class FinetuneConfig:
 
     # LoRA
     use_lora: bool = True                            # If True, uses LoRA fine-tuning
+    finetune_lora: bool = True                       # add lora fine tune
     lora_rank: int = 32                              # Rank of LoRA weight matrix
     lora_dropout: float = 0.0                        # Dropout applied to LoRA weights
     merge_lora_during_training: bool = True          # If True, merges LoRA weights and saves result during training
@@ -141,6 +144,14 @@ class FinetuneConfig:
 
     # fmt: on
 
+def Debug(a:str,b = None):
+    if DEBUG == True:
+        if b:
+            print(a + ": " + str(b))
+        else:
+            print(a)
+
+ 
 
 def remove_ddp_in_checkpoint(state_dict) -> dict:
     """
@@ -369,6 +380,28 @@ def load_module_from_path(
 
     return module
 
+def pad_or_truncate(actions, target_len=120):
+    """
+    actions: Tensor shape [B, T, ...]
+    返回: Tensor shape [B, target_len, ...]
+    """
+    batch_size, seq_len = actions.shape[:2]
+    if seq_len == target_len:
+        return actions
+    elif seq_len > target_len:
+        return actions[:, :target_len, ...]
+    else:
+        # pad length
+        pad_len = target_len - seq_len
+        # padding dims: pad last dim of sequence dimension with zeros
+        # F.pad pads last dims in reverse order, so pad=(pad_left, pad_right, ...)
+        # For padding sequence dimension at dim=1, pad = (0, 0, 0, pad_len)
+        # But F.pad only supports padding last dims, so要用torch.cat来pad sequence维度
+        pad_shape = list(actions.shape)
+        pad_shape[1] = pad_len
+        padding = torch.zeros(pad_shape, dtype=actions.dtype, device=actions.device)
+        return torch.cat([actions, padding], dim=1)
+
 def run_forward_pass(
     vla,
     action_head,
@@ -415,7 +448,12 @@ def run_forward_pass(
     curve_length = 1
 
     # Get ground-truth action labels
-    ground_truth_actions = batch["actions"].to(device_id).to(torch.bfloat16)
+    actions = batch["actions"]  # 假设 shape=[B, T, ...]
+    if use_model == 'use_bezier_regression':
+        actions = pad_or_truncate(actions, (NUM_ACTIONS_CHUNK/ACTION_CHUNK_PER_CURVE) * TOKEN_SEQUENCE_LINE)
+    else:
+        actions = pad_or_truncate(actions, NUM_ACTIONS_CHUNK)
+    ground_truth_actions = actions.to(device_id).to(torch.bfloat16)
 
     
 
@@ -430,6 +468,65 @@ def run_forward_pass(
         )
     else:
         noise, noisy_actions, diffusion_timestep_embeddings = None, None, None
+
+    # print("in labels len: " + str(batch["labels"]))
+    # print("in input_ids len: " + str(batch["input_ids"]))
+    # print("in attention_mask len: " + str(batch["attention_mask"]))
+
+    def trim_batch_after_eos(labels_batch, input_ids_batch, attention_mask_batch):
+        new_labels = []
+        new_input_ids = []
+        new_attention_masks = []
+        seq_len = labels_batch.size(1)
+        PAD_TOKEN_ID =2
+
+        for labels, input_ids, attn in zip(labels_batch, input_ids_batch, attention_mask_batch):
+            L = labels.tolist()
+            I = input_ids.tolist()
+            M = attn.tolist()
+
+            trimmed_L, trimmed_I, trimmed_M = [], [], []
+            started = False
+            keep = NUM_ACTIONS_CHUNK
+
+            for tok, iid, mask in zip(L, I, M):
+                if not started:
+                    if tok == -100:
+                        trimmed_L.append(tok)
+                        trimmed_I.append(iid)
+                        trimmed_M.append(mask)
+                    else:
+                        started = True
+                if started and keep > 0:
+                    keep -= 1
+                    trimmed_L.append(tok)
+                    trimmed_I.append(iid)
+                    trimmed_M.append(mask)
+                    if tok == 2:  # eos
+                        break
+            # # 截断或填充到原始长度
+            # while len(trimmed_L) < seq_len:
+            #     trimmed_L.append(-100)
+            #     trimmed_I.append(PAD_TOKEN_ID)
+            #     trimmed_M.append(0)
+
+            new_labels.append(torch.tensor(trimmed_L, dtype=labels.dtype, device=labels.device))
+            new_input_ids.append(torch.tensor(trimmed_I, dtype=input_ids.dtype, device=input_ids.device))
+            new_attention_masks.append(torch.tensor(trimmed_M, dtype=attn.dtype, device=attn.device))
+
+        # 堆叠成 (B, seq_len) 的 tensor
+        new_labels = torch.stack(new_labels, dim=0)
+        new_input_ids = torch.stack(new_input_ids, dim=0)
+        new_attention_masks = torch.stack(new_attention_masks, dim=0)
+        return new_labels, new_input_ids, new_attention_masks
+
+
+    
+    batch["labels"], batch["input_ids"], batch["attention_mask"] = trim_batch_after_eos(batch["labels"], batch["input_ids"], batch["attention_mask"])
+    Debug("in labels: " + str(batch["labels"]))
+    Debug("in input_ids: " + str(batch["input_ids"]))
+    Debug("in attention_mask: " + str(batch["attention_mask"]))
+
 
     # VLA forward pass
     with torch.autocast("cuda", dtype=torch.bfloat16):
@@ -450,7 +547,9 @@ def run_forward_pass(
     # Get action masks needed for logging
     ground_truth_token_ids = batch["labels"][:, 1:].to(device_id)
     current_action_mask = get_current_action_mask(ground_truth_token_ids)
+    Debug("current_action_mask: "+str(current_action_mask))
     next_actions_mask = get_next_actions_mask(ground_truth_token_ids)
+    Debug("next_actions_mask: "+str(next_actions_mask))
 
     # Compute metrics for discrete action representation (next-token prediction)
     if not (use_model is not None):
@@ -486,32 +585,65 @@ def run_forward_pass(
         # Get hidden states for action portion of response
         batch_size = batch["input_ids"].shape[0]
 
-        if use_model == 'use_bezier_regression':
-            actions_hidden_states = (
-            text_hidden_states[current_action_mask | next_actions_mask]
-            .reshape(batch_size, NUM_ACTIONS_CHUNK * ACTION_DIM, -1)
-            .to(torch.bfloat16)
-            )  # (B, act_chunk_len, D)
 
         if use_model == 'use_bezier_regression':
 
             ground_truth_batch = ground_truth_actions
-            ground_truth_actions = []
-            for ground_truth in ground_truth_batch:
-                curve_fit = BezierProcess.fitBezierToolBox.fit_beziers(ground_truth,epsilon)
-                if len(curve_fit) > NUM_ACTIONS_CHUNK//ACTION_CHUNK_PER_CURVE:
-                    curve_fit = curve_fit[:NUM_ACTIONS_CHUNK//ACTION_CHUNK_PER_CURVE]
-                ground_truth_actions  = ground_truth_actions.append(curve_fit)
+            # print("ground_truth_batch: "+str(ground_truth_batch))
+
+            seq_len = NUM_ACTIONS_CHUNK // ACTION_CHUNK_PER_CURVE
+            max_pts = TOKEN_SEQUENCE_LINE * seq_len
+
+            # for ground_truth in ground_truth_batch:
+            #     curve_fit = BezierProcess.fitBezierToolBox.fit_beziers(ground_truth,epsilon)
+            #     if len(curve_fit) > NUM_ACTIONS_CHUNK//ACTION_CHUNK_PER_CURVE:
+            #         curve_fit = curve_fit[:NUM_ACTIONS_CHUNK//ACTION_CHUNK_PER_CURVE]
+            #     ground_truth_curve.append(curve_fit)
+            #     curve_length = [curve[3] for curve in curve_fit]
+            #     ground_truth_length.append(curve_length)
+            #     ground_truth_curve = torch.stack(ground_truth_curve, dim=0)
+            #     print("ground_truth_curve: "+str(ground_truth_curve))
             actions_hidden_states = (
             text_hidden_states[current_action_mask | next_actions_mask]
-            .reshape(batch_size, NUM_ACTIONS_CHUNK * ACTION_DIM, -1)
+            .reshape(batch_size, NUM_ACTIONS_CHUNK, -1)
             .to(torch.bfloat16)
             )  # (B, act_chunk_len, D)
             # Predict action
-            predicted_actions,curve_length = action_head.module.predict_action(actions_hidden_states)
-            predicted_actions.append(curve_length)
-            # Get full L1 loss
-            loss = torch.nn.L1Loss()(ground_truth_actions, predicted_actions)# TODO curve_length is a logit
+            out_put_curves = action_head.module.predict_action(actions_hidden_states)
+            Debug("out_put_curves: "+str(out_put_curves))
+            
+            # 生成 list-of-list
+            ground_truth_curves = [
+                BezierProcess.fitBezierToolBox
+                    .fit_beziers(gt[:max_pts], epsilon)[:seq_len]
+                for gt in ground_truth_batch
+            ]
+
+            # 整体转换成 (B, seq_len, 4, pt_dim) 张量
+            batch_curves = BezierProcess.fitBezierToolBox.make_ground_truth_tensors(
+                ground_truth_curves,
+                device=actions_hidden_states.device,
+                pt_dim=ACTION_DIM,
+                seq_len=seq_len
+            )
+            batch_curves = BezierProcess.fitBezierToolBox.curves_to_combined(batch_curves)
+            Debug("batch_curves: "+str(batch_curves))
+
+
+            # 再传给 compute_loss
+            out_put_curves_loss = BezierProcess.fitBezierToolBox.compute_loss(out_put_curves, ground_truth_actions,ACTION_DIM)
+            Debug("out_put_curves_loss:", out_put_curves_loss)
+            loss = out_put_curves_loss
+
+
+            ratio = 0.2
+
+            # 然后再切片
+            predict_curve_length = out_put_curves[:, :,-1]
+            ground_truth_length = batch_curves[:, :,-1]
+            predict_curve_length_loss = torch.nn.L1Loss()(predict_curve_length, ground_truth_length)/TOKEN_SEQUENCE_LINE * ratio # 归一化
+            loss += predict_curve_length_loss
+            Debug("predict_curve_length_loss:" + str(predict_curve_length_loss))
 
         if use_model == 'use_l1_regression':
             actions_hidden_states = (
@@ -583,7 +715,7 @@ def run_forward_pass(
 
         # Get detailed L1 losses for logging
         should_log_l1_loss = not use_model == 'use_diffusion' or (use_model == 'use_diffusion' and compute_diffusion_l1)
-        if should_log_l1_loss:
+        if should_log_l1_loss and not use_model == "use_bezier_regression":
             ground_truth_curr_action = ground_truth_actions[:, 0]
             predicted_curr_action = predicted_actions[:, 0]
             ground_truth_next_actions = ground_truth_actions[:, 1:]
@@ -594,6 +726,13 @@ def run_forward_pass(
                 {
                     "curr_action_l1_loss": curr_action_l1_loss.item(),
                     "next_actions_l1_loss": next_actions_l1_loss.item(),
+                }
+            )
+        else:
+            metrics.update(
+                {
+                    "out_put_curves_loss": out_put_curves_loss.item(),
+                    "predict_curve_length_loss": predict_curve_length_loss.item()
                 }
             )
 
@@ -1121,12 +1260,15 @@ def finetune(cfg: FinetuneConfig) -> None:
         NUM_PATCHES += 1
 
     # Instantiate optimizer
-    
-    trainable_params = [param for param in vla.parameters() if param.requires_grad]
-    print(f"add vla.parameters: {sum(p.numel() for p in trainable_params)}")
-    if cfg.use_l1_regression or cfg.use_diffusion or cfg.use_rnn_regression:
-        trainable_params += [param for param in action_head.parameters() if param.requires_grad]# 训练action_head
-        print(f"add action_head: {sum(p.numel() for p in trainable_params)}")
+    trainable_params = []
+    if cfg.finetune_lora:
+        trainable_params = [param for param in vla.parameters() if param.requires_grad]
+        print(f"add vla.parameters: {sum(p.numel() for p in trainable_params)}")
+    # if cfg.use_l1_regression or cfg.use_diffusion or cfg.use_rnn_regression:
+        # trainable_params += [param for param in action_head.parameters() if param.requires_grad]# 训练action_head
+        # print(f"add action_head: {sum(p.numel() for p in trainable_params)}")
+    trainable_params += [param for param in action_head.parameters() if param.requires_grad]# 训练action_head
+    print(f"add action_head: {sum(p.numel() for p in trainable_params)}")
     if cfg.use_diffusion:
         trainable_params += [param for param in noisy_action_projector.parameters() if param.requires_grad]
     if cfg.use_proprio:

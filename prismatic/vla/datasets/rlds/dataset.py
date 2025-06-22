@@ -548,6 +548,31 @@ def make_interleaved_dataset(
             num_parallel_reads=reads,
             dataset_statistics=all_dataset_statistics[dataset_kwargs["name"]],
         )
+        # 🔍 加入调试语句，检查轨迹长度
+        def fix_trajectory_length(trajectory):
+            target_len = 120
+
+            def pad_or_truncate(t):
+                seq_len = tf.shape(t)[0]
+
+                def pad():
+                    pad_len = target_len - seq_len
+                    # pad_len可能会负数，做clip，保证非负
+                    pad_len = tf.maximum(pad_len, 0)
+                    padding_shape = tf.concat([[pad_len], tf.shape(t)[1:]], axis=0)
+                    padding = tf.zeros(padding_shape, dtype=t.dtype)
+                    return tf.concat([t, padding], axis=0)
+
+                def trunc():
+                    return t[:target_len]
+
+                return tf.cond(seq_len < target_len, pad, trunc)
+
+            return tf.nest.map_structure(pad_or_truncate, trajectory)
+
+        dataset = dataset.map(fix_trajectory_length)
+
+
         dataset = apply_trajectory_transforms(
             dataset.repeat(),
             **traj_transform_kwargs,

@@ -16,6 +16,8 @@ STOP_INDEX = 2  # '</s>'
 ACTION_CHUNK_PER_CURVE = 2
 TOKEN_SEQUENCE_LINE = 30
 
+DEBUG = False
+
 # Defines supported normalization schemes for action and proprioceptive state.
 class NormalizationType(str, Enum):
     # fmt: off
