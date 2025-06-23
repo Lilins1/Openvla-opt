@@ -193,7 +193,8 @@ class fitBezierToolBox:
                 
                 # 避免使用指数运算，改用可微的sigmoid或softplus
                 # 替代方案1: 使用sigmoid
-                feedback_factor = torch.sigmoid(1 * ((loss_avg - compute_curve_loss)/loss_avg))
+                loss_avd_m = torch.clamp(loss_avg, min=0.01)
+                feedback_factor = torch.sigmoid(1 * ((loss_avg - compute_curve_loss)/loss_avd_m))
                 feedback_factor = torch.clamp(feedback_factor, min=0.8,max = 1.2)
                 
                 # 替代方案2: 使用线性反馈（更稳定）
