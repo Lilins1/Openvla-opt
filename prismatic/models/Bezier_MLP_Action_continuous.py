@@ -98,7 +98,7 @@ class Bezier_MLP_Action_continuous(nn.Module):
         lengths = torch.clamp(lengths, min=1,max = TOKEN_SEQUENCE_LINE -1)# test should be TOKEN_SEQUENCE_LINE - 1
         lengths = lengths.unsqueeze(-1)
 
-        lengths[:,1,0] = 1 # test delate later 
+        # lengths[:,1,0] = 1 # test delate later 
 
         lengths = lengths[:,1:,:]
 
