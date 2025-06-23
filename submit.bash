@@ -43,16 +43,17 @@ nvidia-smi
 # -------------------------------
 # Run your training script
 # -------------------------------
+
 torchrun --standalone --nnodes 1 --nproc-per-node 1 vla-scripts/finetune_RNN.py \
   --vla_path openvla/openvla-7b \
   --data_root_dir /mimer/NOBACKUP/groups/naiss2024-5-164/Ruizhe/OPENVLA/modified_libero_rlds \
   --dataset_name libero_spatial_no_noops \
-  --run_root_dir /mimer/NOBACKUP/groups/naiss2024-5-164/Ruizhe/OPENVLA/rnn_model/lebiro/libero_spatial_no_noops/lora_train \
+  --run_root_dir /mimer/NOBACKUP/groups/naiss2024-5-164/Ruizhe/OPENVLA/rnn_model/Bezier/libero/lora_train \
   --use_film False \
   --num_images_in_input 2 \
   --use_proprio True \
-  --batch_size 4 \
-  --grad_accumulation_steps 3\
+  --batch_size 1 \
+  --grad_accumulation_steps 16\
   --learning_rate 5e-4 \
   --num_steps_before_decay 150005 \
   --max_steps 200005 \
