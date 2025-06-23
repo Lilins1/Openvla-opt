@@ -10,6 +10,7 @@ from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Type
+from torch.nn.utils.rnn import pad_sequence
 
 import draccus
 import torch
@@ -513,10 +514,14 @@ def run_forward_pass(
             new_attention_masks.append(torch.tensor(trimmed_M, dtype=attn.dtype, device=attn.device))
 
         # 堆叠成 (B, seq_len) 的 tensor
-        new_labels = torch.stack(new_labels, dim=0)
-        new_input_ids = torch.stack(new_input_ids, dim=0)
-        new_attention_masks = torch.stack(new_attention_masks, dim=0)
-        return new_labels, new_input_ids, new_attention_masks
+        # new_labels = torch.stack(new_labels, dim=0)
+        # new_input_ids = torch.stack(new_input_ids, dim=0)
+        # new_attention_masks = torch.stack(new_attention_masks, dim=0)
+        # 填充值：labels用-100，input_ids用PAD_TOKEN_ID，attention_mask用0
+        padded_labels = pad_sequence(new_labels, batch_first=True, padding_value=-100)
+        padded_input_ids = pad_sequence(new_input_ids, batch_first=True, padding_value=PAD_TOKEN_ID)
+        padded_attention_masks = pad_sequence(new_attention_masks, batch_first=True, padding_value=0)
+        return padded_labels, padded_input_ids, padded_attention_masks
 
 
     if use_model == 'use_bezier_regression':
