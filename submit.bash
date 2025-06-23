@@ -4,10 +4,10 @@
 #SBATCH --output=logs/libero_out_%j.txt
 #SBATCH --error=logs/libero_err_%j.txt
 #SBATCH --nodes=1
-#SBATCH --gpus-per-node=A100:1
+#SBATCH --gpus-per-node=A100fat:1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=12
-#SBATCH --time=140:00:00
+#SBATCH --time=72:00:00
 #SBATCH --mail-user=lruizhe@kth.se
 #SBATCH --mail-type=ALL
 #SBATCH -p alvis
@@ -45,16 +45,16 @@ nvidia-smi
 # -------------------------------
 torchrun --standalone --nnodes 1 --nproc-per-node 1 vla-scripts/finetune_RNN.py \
   --vla_path openvla/openvla-7b \
-  --data_root_dir /mnt/disk2/ruizhe/Projects/openvlaData/Model/Libero/modified_libero_rlds \
+  --data_root_dir /mimer/NOBACKUP/groups/naiss2024-5-164/Ruizhe/OPENVLA/modified_libero_rlds \
   --dataset_name libero_spatial_no_noops \
-  --run_root_dir /mnt/disk2/ruizhe/Projects/openvlaData/BezierAndDCT/Bezier/log/libero_spatial_no_noops/lora_train \
+  --run_root_dir /mimer/NOBACKUP/groups/naiss2024-5-164/Ruizhe/OPENVLA/rnn_model/lebiro/libero_spatial_no_noops/lora_train \
   --use_film False \
   --num_images_in_input 2 \
   --use_proprio True \
   --batch_size 4 \
   --grad_accumulation_steps 3\
   --learning_rate 5e-4 \
-  --num_steps_before_decay 150000 \
+  --num_steps_before_decay 150005 \
   --max_steps 200005 \
   --save_freq 10000 \
   --save_latest_checkpoint_only False \
