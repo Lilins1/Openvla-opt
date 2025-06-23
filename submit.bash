@@ -52,8 +52,8 @@ torchrun --standalone --nnodes 1 --nproc-per-node 1 vla-scripts/finetune_RNN.py 
   --use_film False \
   --num_images_in_input 2 \
   --use_proprio True \
-  --batch_size 1 \
-  --grad_accumulation_steps 16\
+  --batch_size 4 \
+  --grad_accumulation_steps 4\
   --learning_rate 5e-4 \
   --num_steps_before_decay 150005 \
   --max_steps 200005 \

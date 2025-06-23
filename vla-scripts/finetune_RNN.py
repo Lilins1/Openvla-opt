@@ -507,12 +507,7 @@ def run_forward_pass(
                     trimmed_M.append(mask)
                     if tok == 2:  # eos
                         break
-            # # 截断或填充到原始长度
-            # while len(trimmed_L) < seq_len:
-            #     trimmed_L.append(-100)
-            #     trimmed_I.append(PAD_TOKEN_ID) 
-            #     trimmed_M.append(0)
-
+                    
             new_labels.append(torch.tensor(trimmed_L, dtype=labels.dtype, device=labels.device))
             new_input_ids.append(torch.tensor(trimmed_I, dtype=input_ids.dtype, device=input_ids.device))
             new_attention_masks.append(torch.tensor(trimmed_M, dtype=attn.dtype, device=attn.device))
