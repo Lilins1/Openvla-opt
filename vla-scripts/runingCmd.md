@@ -286,3 +286,10 @@ tmux ls
 tmux kill-session -t mysession
 
 # 提交作业
+
+
+sbatch submit.bash
+
+squeue -u $USER
+
+scancel 123456

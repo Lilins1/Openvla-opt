@@ -520,7 +520,7 @@ def run_forward_pass(
         # 填充值：labels用-100，input_ids用PAD_TOKEN_ID，attention_mask用0
         padded_labels = pad_sequence(new_labels, batch_first=True, padding_value=-100)
         padded_input_ids = pad_sequence(new_input_ids, batch_first=True, padding_value=PAD_TOKEN_ID)
-        padded_attention_masks = pad_sequence(new_attention_masks, batch_first=True, padding_value=0)
+        padded_attention_masks = pad_sequence(new_attention_masks, batch_first=True, padding_value=False)
         return padded_labels, padded_input_ids, padded_attention_masks
 
 
