@@ -35,9 +35,9 @@ torchrun --standalone --nnodes 1 --nproc-per-node 1 vla-scripts/finetune_RNN.py 
   --num_images_in_input 2 \
   --use_proprio False \
   --batch_size 1 \
-  --grad_accumulation_steps 16\
+  --grad_accumulation_steps 10\
   --learning_rate 5e-4 \
-  --num_steps_before_decay 100000 \
+  --num_steps_before_decay 150000 \
   --max_steps 200005 \
   --save_freq 10000 \
   --save_latest_checkpoint_only False \
@@ -50,7 +50,7 @@ torchrun --standalone --nnodes 1 --nproc-per-node 1 vla-scripts/finetune_RNN.py 
   --finetune_lora True\
   --save_vla False\
   --rnn_in_batch True\
-  --run_id_note Bezier1Curve_libero_acc16
+  --run_id_note Bezier1Curve_libero_acc10
 
 ## libero Bezier
 torchrun --standalone --nnodes 1 --nproc-per-node 1 vla-scripts/finetune_RNN.py \

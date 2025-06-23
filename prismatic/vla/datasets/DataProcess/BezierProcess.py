@@ -177,7 +177,7 @@ class fitBezierToolBox:
                 real_len = seg_pts.shape[0]
                 
                 # 填充不足部分
-                if real_len < seg_len_int:
+                if real_len < seg_len_int + 1:
                     pad_size = seg_len_int - real_len
                     pad = torch.zeros((pad_size, points.shape[1]), device=points.device)
                     seg_pts = torch.cat([seg_pts, pad], dim=0)
