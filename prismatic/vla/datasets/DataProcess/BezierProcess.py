@@ -204,7 +204,7 @@ class fitBezierToolBox:
                 length_weight = 1.0 + 0.1 * (1 - 2 * length_ratio)
                 
                 # 组合权重
-                weight = 1 + 0.2 * (feedback_factor - 1) * length_weight #基于误差平均值的正负反馈
+                weight = 1 + 0.05 * (feedback_factor - 1) * length_weight #基于误差平均值的正负反馈
                 
                 # 累积损失（保持可微）
                 sample_error = sample_error + compute_curve_loss * seg_len_int.float() * weight
