@@ -81,6 +81,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 forCount = 0
 forSum = 0
+print_curve_count = 0
 
 @dataclass
 class FinetuneConfig:
@@ -447,6 +448,7 @@ def run_forward_pass(
     """
     metrics = {}
     curve_length = 1
+    global print_curve_count
 
     # Get ground-truth action labels
     actions = batch["actions"]  # 假设 shape=[B, T, ...]
@@ -535,7 +537,8 @@ def run_forward_pass(
         Debug("in input_ids: " + str(batch["input_ids"]))
         Debug("in attention_mask: " + str(batch["attention_mask"]))
     elif use_model == 'use_bezier_regression_continuous':
-        token_padding_length = NUM_ACTIONS_CHUNK + 1
+        # token_padding_length = NUM_ACTIONS_CHUNK + 1
+        token_padding_length = 2 + 1
         batch["labels"], batch["input_ids"], batch["attention_mask"] = trim_batch_after_eos(batch["labels"], batch["input_ids"], batch["attention_mask"],token_padding_length)
 
 
@@ -627,20 +630,24 @@ def run_forward_pass(
             )  # (B, act_chunk_len, D)
             # Predict action
             out_put_curves = action_head.module.predict_action(actions_hidden_states)
-            Debug("out_put_curves: "+str(out_put_curves))
+            print_curve_count += 1
+            # if print_curve_count % 10001 == 0: 
+            #     print("out_put_curves: "+str(out_put_curves))
+            #     print("ground_truth_actions: "+str(ground_truth_actions))
+            #     print_curve_count = 0
             
 
             # 再传给 compute_loss
-            out_put_curves_loss, batch_errors_org = BezierProcess.fitBezierToolBox.compute_loss(out_put_curves, ground_truth_actions,ACTION_DIM)
+            out_put_curves_loss, ratio = BezierProcess.fitBezierToolBox.compute_loss(out_put_curves, ground_truth_actions,ACTION_DIM)
+            BezierProcess.fitBezierToolBox.avg_update(out_put_curves_loss)
+
             Debug("out_put_curves_loss:", out_put_curves_loss)
             avg_length = BezierProcess.fitBezierToolBox.curves_length_avg(out_put_curves)
             Debug("avg_length:", avg_length)
-            ratio = (2 ** (0.5 *(1 - 2 * (avg_length/TOKEN_SEQUENCE_LINE))))
+            # ratio = (2 ** (0.5 *(1 - 2 * (avg_length/TOKEN_SEQUENCE_LINE))))
+            # ratio = 1
             Debug("ratio:", ratio)
             loss = out_put_curves_loss
-
-
-
 
         if use_model == 'use_bezier_regression':
 
@@ -796,7 +803,7 @@ def run_forward_pass(
             if use_model == "use_bezier_regression_onecurve" or use_model == "use_bezier_regression_continuous":
                 metrics.update(
                     {
-                        "out_put_curves_loss": batch_errors_org.item(),
+                        # "out_put_curves_loss": batch_errors_org.item(),
                         "avg_length": avg_length,
                         "ratio": ratio,
                     }

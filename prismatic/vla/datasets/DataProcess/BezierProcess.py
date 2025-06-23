@@ -1,6 +1,12 @@
 import torch
 from prismatic.vla.constants import TOKEN_SEQUENCE_LINE
 from prismatic.vla.constants import DEBUG
+import numpy as np
+
+printflag = 0
+num_count = 0
+loss_list = np.zeros(2000, dtype=float)
+loss_avg = 0.0
 
 class fitBezierToolBox:
     
@@ -8,6 +14,24 @@ class fitBezierToolBox:
     def Debug(a:str,b):
         if DEBUG == True:
             print(a + ": " + str(b))
+
+    @staticmethod
+    def avg_update(loss):
+        global loss_avg, num_count,loss_list
+        loss = loss.item()  #去除计算图
+        length = 2000
+        if num_count < length:
+            loss_list[num_count] = loss
+            num_count += 1 
+            loss_avg = np.mean(loss_list[:num_count])
+        else:
+            a = loss_list[num_count%length]
+            loss_list[num_count%length] = loss
+            loss_avg = loss_avg + (loss-a)/length
+            num_count += 1
+            if num_count == 100 * length:
+                num_count = length
+        return loss_avg
 
     @staticmethod
     def dots_into_bezier(dots):
@@ -89,6 +113,7 @@ class fitBezierToolBox:
         combined_curve: Tensor of shape (pt_dim*3 + 1,), last element is segment length
         points: Tensor of shape (seg_len, D)
         """
+        global printflag
         # unpack
         P0 = combined_curve[:pt_dim]
         P1 = combined_curve[pt_dim:2*pt_dim]
@@ -103,42 +128,99 @@ class fitBezierToolBox:
         # fitBezierToolBox.Debug("bezier_points",bezier_points)
         # fitBezierToolBox.Debug("points",points)
 
-        error = torch.mean(torch.norm(bezier_points - points, dim=1))
+        # error = torch.mean(torch.norm(bezier_points - points, dim=1))
+
+        # Get full L1 loss
+        error = torch.nn.L1Loss()(points, bezier_points)
+
+
+        printflag += 1
+        if printflag % 4001 == 0: 
+            print("bezier_points: "+str(bezier_points))
+            print("points: "+str(points))
+            print("error: "+str(error))
+            printflag = 0
         return error
 
     @staticmethod
-    def compute_loss(combined_curves, batch_points, pt_dim):
+    def compute_loss(combined_curves, batch_points, pt_dim, loss_avg=None):
         """
         combined_curves: Tensor of shape (B, seq_len, pt_dim*3+1)
         batch_points: Tensor of shape (B, max_points, D)
         pt_dim: dimension of each control point
+        loss_avg: 当前批次的平均损失（可选）
         """
         batch_size, seq_len, _ = combined_curves.shape
         batch_errors = []
         batch_errors_org = []
+        
+        # 如果未提供loss_avg，使用当前批次的平均值
+        if loss_avg is None:
+            loss_avg = torch.tensor(0.0, device=combined_curves.device)
+        
+        # 确保所有操作在PyTorch计算图中
         for i in range(batch_size):
             sample_curves = combined_curves[i]  # (seq_len, 3*pt_dim+1)
             points = batch_points[i]
-            sample_error = 0.0
-            org_error = 0.0
-            consumed = 0
-            for curve in sample_curves:
+            sample_error = torch.tensor(0.0, device=points.device)
+            org_error = torch.tensor(0.0, device=points.device)
+            consumed = torch.tensor(0.0, device=points.device)
+            
+            for j, curve in enumerate(sample_curves):
                 seg_len = curve[-1]
-                seg_len = int(seg_len.item() + 1)
-                seg_pts = points[int(consumed):int(consumed + seg_len)]
+                seg_len_int = torch.round(seg_len).long()  # 四舍五入到整数
+                start_idx = torch.round(consumed).long()
+                end_idx = start_idx + seg_len_int
+                
+                # 提取点序列
+                seg_pts = points[start_idx:end_idx]
                 real_len = seg_pts.shape[0]
-                if real_len < int(seg_len):
-                    pad = torch.zeros((int(consumed+seg_len)-int(consumed)-real_len, points.shape[1]), device=points.device)
+                
+                # 填充不足部分
+                if real_len < seg_len_int:
+                    pad_size = seg_len_int - real_len
+                    pad = torch.zeros((pad_size, points.shape[1]), device=points.device)
                     seg_pts = torch.cat([seg_pts, pad], dim=0)
-                bias = consumed - int(consumed)
-                ratio = (2 ** (0.5 *(1 - 2 * ((curve[-1]+1)/TOKEN_SEQUENCE_LINE)))) # length control
-                compute_curve_loss = fitBezierToolBox.compute_curve_loss(curve, seg_pts, pt_dim , bias)
-                org_error += compute_curve_loss
-                sample_error += compute_curve_loss * ratio
-                consumed += seg_len
+                
+                # 计算偏移量（保持可微性）
+                bias = consumed - start_idx.float()
+                
+                # 计算基础损失
+                compute_curve_loss = fitBezierToolBox.compute_curve_loss(curve, seg_pts, pt_dim, bias)
+                
+                # 长度比例因子（保持可微）
+                length_ratio = seg_len / TOKEN_SEQUENCE_LINE
+                
+                # 避免使用指数运算，改用可微的sigmoid或softplus
+                # 替代方案1: 使用sigmoid
+                feedback_factor = torch.sigmoid(1 * ((loss_avg - compute_curve_loss)/loss_avg))
+                feedback_factor = torch.clamp(feedback_factor, min=0.8,max = 1.2)
+                
+                # 替代方案2: 使用线性反馈（更稳定）
+                # feedback_factor = 1.0 + 0.5 * (loss_avg - compute_curve_loss) / (loss_avg + 1e-8)
+                
+                # 长度相关权重
+                length_weight = 1.0 + 0.2 * (1 - 2 * length_ratio)
+                
+                # 组合权重
+                weight = 1 + (feedback_factor - 1) * length_weight #基于误差平均值的正负反馈
+                
+                # 累积损失（保持可微）
+                sample_error = sample_error + compute_curve_loss * seg_len_int.float() * weight
+                org_error = org_error + compute_curve_loss * seg_len_int.float()
+                
+                consumed = consumed + seg_len
+            
+            # 避免除零错误
+            total_len = torch.clamp(consumed, min=1)
+            sample_error = sample_error / total_len
+            org_error = org_error / total_len
+            
             batch_errors.append(sample_error)
             batch_errors_org.append(org_error)
-        return torch.mean(torch.stack(batch_errors)),torch.mean(torch.stack(batch_errors_org))
+            ratio = torch.mean(torch.stack(batch_errors_org))/torch.mean(torch.stack(batch_errors))
+        
+        return torch.mean(torch.stack(batch_errors)), ratio
     
     @staticmethod
     def curves_length(combined_curves):

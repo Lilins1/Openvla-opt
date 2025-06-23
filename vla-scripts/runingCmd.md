@@ -25,7 +25,7 @@ torchrun --standalone --nnodes 1 --nproc-per-node X vla-scripts/finetune.py \
   --wandb_project "YOUR_WANDB_PROJECT" \
   --run_id_note parallel_dec--25_acts_chunk--continuous_acts--L1_regression--3rd_person_img--left_right_wrist_imgs--proprio_state--film
 
-## libero Bezier one curve
+## libero Bezier continuous
 torchrun --standalone --nnodes 1 --nproc-per-node 1 vla-scripts/finetune_RNN.py \
   --vla_path openvla/openvla-7b \
   --data_root_dir /mnt/disk2/ruizhe/Projects/openvlaData/Model/Libero/modified_libero_rlds \
@@ -36,7 +36,7 @@ torchrun --standalone --nnodes 1 --nproc-per-node 1 vla-scripts/finetune_RNN.py 
   --use_proprio False \
   --batch_size 1 \
   --grad_accumulation_steps 16\
-  --learning_rate 4e-4 \
+  --learning_rate 5e-4 \
   --num_steps_before_decay 100000 \
   --max_steps 200005 \
   --save_freq 10000 \

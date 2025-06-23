@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 from prismatic.vla.constants import ACTION_CHUNK_PER_CURVE, NUM_ACTIONS_CHUNK, ACTION_DIM, TOKEN_SEQUENCE_LINE,PROPRIO_DIM, STOP_INDEX, BEZIER_CURVES,Debug
+from prismatic.vla.datasets.DataProcess.BezierProcess import QuadraticBezier
 
 class Bezier_MLP_Action_continuous(nn.Module):
     """
@@ -88,13 +89,20 @@ class Bezier_MLP_Action_continuous(nn.Module):
         P1 = P1[:,1:,:]
         P2 = P2[:,1:,:]
 
+
         # 4) 长度预测
         length_token = out[..., cd]             # (B, seq_len, num_length_classes)
         lengths = (0.5 + length_token) *  TOKEN_SEQUENCE_LINE
         # 把所有小于 1 的值都置为 1
-        lengths = torch.clamp(lengths, min=1.001,max = TOKEN_SEQUENCE_LINE -1 + 0.001)
+        # lengths = torch.clamp(lengths, min=1.001,max = 2 -1 + 0.002)# test should be TOKEN_SEQUENCE_LINE - 1
+        lengths = torch.clamp(lengths, min=1,max = TOKEN_SEQUENCE_LINE -1)# test should be TOKEN_SEQUENCE_LINE - 1
         lengths = lengths.unsqueeze(-1)
+
+        lengths[:,1,0] = 1 # test delate later 
+
         lengths = lengths[:,1:,:]
+
+        P1 = - (0.25 * P0 + 0.25 * P2 - P1) * 2 # form dot to line
 
         combined = torch.cat([P0, P1, P2, lengths], dim=-1)
         return combined

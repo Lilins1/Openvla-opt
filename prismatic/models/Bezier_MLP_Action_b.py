@@ -88,6 +88,8 @@ class Bezier_MLP_Action_b(nn.Module):
         P1 = P1[:,1:,:]
         P2 = P2[:,1:,:]
 
+        P1 = - (0.25 * P0 + 0.25 * P2 - P1) * 2 # form dot to line
+
         # 4) 长度预测
         length_logits = out[..., cd:]             # (B, seq_len, num_length_classes)
         lengths = torch.argmax(length_logits, dim=-1).unsqueeze(-1).float() + 1.0  # (B, seq_len,1)

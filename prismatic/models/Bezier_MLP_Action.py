@@ -86,6 +86,8 @@ class Bezier_MLP_Action(nn.Module):
         length_logits = out[..., cd:]             # (B, seq_len, num_length_classes)
         lengths = torch.argmax(length_logits, dim=-1).unsqueeze(-1).float() + 1.0  # (B, seq_len,1)
 
+        P1 = - (0.25 * P0 + 0.25 * P2 - P1) * 2 # form dot to line
+
         # 5) 合并成一个 Tensor: (B, seq_len, pt_dim*3 + 1)
         combined = torch.cat([P0, P1, P2, lengths], dim=-1)
 
