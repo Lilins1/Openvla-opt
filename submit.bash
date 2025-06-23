@@ -4,10 +4,10 @@
 #SBATCH --output=logs/libero_out_%j.txt
 #SBATCH --error=logs/libero_err_%j.txt
 #SBATCH --nodes=1
-#SBATCH --gpus-per-node=A100fat:1
+#SBATCH --gpus-per-node=A100:1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=12
-#SBATCH --time=72:00:00
+#SBATCH --time=150:00:00
 #SBATCH --mail-user=lruizhe@kth.se
 #SBATCH --mail-type=ALL
 #SBATCH -p alvis
