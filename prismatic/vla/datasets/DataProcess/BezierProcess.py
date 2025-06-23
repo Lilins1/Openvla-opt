@@ -195,16 +195,16 @@ class fitBezierToolBox:
                 # 替代方案1: 使用sigmoid
                 loss_avd_m = torch.clamp(loss_avg, min=0.01)
                 feedback_factor = torch.sigmoid(1 * ((loss_avg - compute_curve_loss)/loss_avd_m))
-                feedback_factor = torch.clamp(feedback_factor, min=0.8,max = 1.2)
+                feedback_factor = torch.clamp(feedback_factor, min=0.1,max = 2)
                 
                 # 替代方案2: 使用线性反馈（更稳定）
                 # feedback_factor = 1.0 + 0.5 * (loss_avg - compute_curve_loss) / (loss_avg + 1e-8)
                 
                 # 长度相关权重
-                length_weight = 1.0 + 0.2 * (1 - 2 * length_ratio)
+                length_weight = 1.0 + 0.1 * (1 - 2 * length_ratio)
                 
                 # 组合权重
-                weight = 1 + (feedback_factor - 1) * length_weight #基于误差平均值的正负反馈
+                weight = 1 + 0.2 * (feedback_factor - 1) * length_weight #基于误差平均值的正负反馈
                 
                 # 累积损失（保持可微）
                 sample_error = sample_error + compute_curve_loss * seg_len_int.float() * weight
