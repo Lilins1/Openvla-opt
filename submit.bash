@@ -4,10 +4,10 @@
 #SBATCH --output=logs/libero_out_%j.txt
 #SBATCH --error=logs/libero_err_%j.txt
 #SBATCH --nodes=1
-#SBATCH --gpus-per-node=A100fat:1
+#SBATCH --gpus-per-node=A100:1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=12
-#SBATCH --time=72:00:00
+#SBATCH --time=140:00:00
 #SBATCH --mail-user=lruizhe@kth.se
 #SBATCH --mail-type=ALL
 #SBATCH -p alvis
@@ -51,8 +51,8 @@ torchrun --standalone --nnodes 1 --nproc-per-node 1 vla-scripts/finetune_RNN.py 
   --use_film False \
   --num_images_in_input 2 \
   --use_proprio True \
-  --batch_size 12 \
-  --grad_accumulation_steps 1\
+  --batch_size 4 \
+  --grad_accumulation_steps 3\
   --learning_rate 5e-4 \
   --num_steps_before_decay 150000 \
   --max_steps 200005 \
