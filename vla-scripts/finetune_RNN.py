@@ -507,7 +507,7 @@ def run_forward_pass(
                     trimmed_M.append(mask)
                     if tok == 2:  # eos
                         break
-                    
+
             new_labels.append(torch.tensor(trimmed_L, dtype=labels.dtype, device=labels.device))
             new_input_ids.append(torch.tensor(trimmed_I, dtype=input_ids.dtype, device=input_ids.device))
             new_attention_masks.append(torch.tensor(trimmed_M, dtype=attn.dtype, device=attn.device))
@@ -800,7 +800,7 @@ def run_forward_pass(
                     {
                         # "out_put_curves_loss": batch_errors_org.item(),
                         "avg_length": avg_length,
-                        "ratio": ratio,
+                        "ratio": ratio.item(),
                     }
                 )
 
