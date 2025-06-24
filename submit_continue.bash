@@ -49,7 +49,7 @@ torchrun --standalone --nnodes 1 --nproc-per-node 1 vla-scripts/finetune_RNN.py 
   --data_root_dir /mimer/NOBACKUP/groups/naiss2024-5-164/Ruizhe/OPENVLA/modified_libero_rlds \
   --dataset_name libero_spatial_no_noops \
   --run_root_dir /mimer/NOBACKUP/groups/naiss2024-5-164/Ruizhe/OPENVLA/rnn_model/Bezier/libero/lora_train \
-  --load_Lora_path /mimer/NOBACKUP/groups/naiss2024-5-164/Ruizhe/OPENVLA/rnn_model/Bezier/libero/lora_train/openvla-7b+libero_spatial_no_noops+b16+lr-0.0005+lora-r128+dropout-0.0--image_aug--Bezier1Curve_libero_acc16--30000_chkpt \
+  --load_Lora_path /mimer/NOBACKUP/groups/naiss2024-5-164/Ruizhe/OPENVLA/rnn_model/Bezier/libero/lora_train/openvla-7b+libero_spatial_no_noops+b16+lr-0.0005+lora-r128+dropout-0.0--image_aug--Bezier1Curve_libero_acc16--20000_chkpt \
   --use_film False \
   --num_images_in_input 2 \
   --use_proprio True \
