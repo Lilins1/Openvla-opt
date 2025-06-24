@@ -46,6 +46,8 @@ from prismatic.models.MLP_RNN_action import MLP_RNN_ActionHead
 from prismatic.models.Bezier_MLP_Action import Bezier_MLP_Action
 from prismatic.models.Bezier_MLP_Action_b import Bezier_MLP_Action_b
 from prismatic.models.Bezier_MLP_Action_continuous import Bezier_MLP_Action_continuous
+from prismatic.models.MLP_DCT_Actionhead import MLP_DCT_Actionhead
+from prismatic.models.MLP_Action_Actionhead import MLP_Action_Actionhead
 
 from prismatic.models.backbones.llm.prompting import PurePromptBuilder
 from prismatic.models.film_vit_wrapper import FiLMedPrismaticVisionBackbone
@@ -102,6 +104,9 @@ class FinetuneConfig:
     use_bezier_regression: bool = False
     use_bezier_regression_onecurve:bool = False
     use_bezier_regression_continuous:bool = False
+    use_dct_regression:bool = False
+    use_action_regression:bool = False
+
 
     use_model: str = 'use_bezier_regression'
 
@@ -536,7 +541,7 @@ def run_forward_pass(
         Debug("in labels: " + str(batch["labels"]))
         Debug("in input_ids: " + str(batch["input_ids"]))
         Debug("in attention_mask: " + str(batch["attention_mask"]))
-    elif use_model == 'use_bezier_regression_continuous':
+    elif use_model == 'use_bezier_regression_continuous' or use_model == 'use_dct_regression' or use_model == 'use_action_regression':
         # token_padding_length = NUM_ACTIONS_CHUNK + 1
         token_padding_length = 2 + 1
         batch["labels"], batch["input_ids"], batch["attention_mask"] = trim_batch_after_eos(batch["labels"], batch["input_ids"], batch["attention_mask"],token_padding_length)
@@ -648,6 +653,33 @@ def run_forward_pass(
             Debug("ratio:", ratio)
             loss = out_put_curves_loss
 
+        if use_model == 'use_dct_regression':
+            # Predict action
+            actions_hidden_states = (
+            text_hidden_states[current_action_mask | next_actions_mask]
+            .reshape(batch_size, token_padding_length, -1)
+            .to(torch.bfloat16)
+            )  # (B, act_chunk_len, D)
+            predicted_actions = action_head.module.predict_action(actions_hidden_states)
+            # Get full L1 loss
+            # print(f'ground_truth_actions: {ground_truth_actions}')
+            # print(f'predicted_actions: {predicted_actions}')
+            loss = torch.nn.L1Loss()(ground_truth_actions, predicted_actions)
+
+        if use_model == 'use_action_regression':
+            # Predict action
+            actions_hidden_states = (
+            text_hidden_states[current_action_mask | next_actions_mask]
+            .reshape(batch_size, token_padding_length, -1)
+            .to(torch.bfloat16)
+            )  # (B, act_chunk_len, D)
+            predicted_actions = action_head.module.predict_action(actions_hidden_states)
+            # Get full L1 loss
+            # print(f'ground_truth_actions: {ground_truth_actions}')
+            # print(f'predicted_actions: {predicted_actions}')
+            loss = torch.nn.L1Loss()(ground_truth_actions, predicted_actions)
+
+        
         if use_model == 'use_bezier_regression':
 
             ground_truth_batch = ground_truth_actions
@@ -807,6 +839,14 @@ def run_forward_pass(
                         "ratio": ratio.item(),
                     }
                 )
+            # if use_model == 'use_action_regression' or use_model == 'use_dct_regression':
+            #     metrics.update(
+            #         {
+            #             "curr_action_l1_loss": curr_action_l1_loss.item(),
+            #             "next_actions_l1_loss": next_actions_l1_loss.item(),
+            #         }
+            #     )
+
 
     # Return both the loss tensor (with gradients) and the metrics dictionary (with detached values)
     return loss, metrics, rnn_prev_state
@@ -1007,7 +1047,7 @@ def save_training_checkpoint(
                 noisy_action_projector.state_dict(), checkpoint_dir / f"noisy_action_projector--{checkpoint_name_suffix}"
             )
 
-        if (cfg.use_l1_regression or cfg.use_diffusion or cfg.use_rnn_regression) and action_head is not None:
+        if action_head is not None: #(cfg.use_l1_regression or cfg.use_diffusion or cfg.use_rnn_regression or cfg.use_dct_regression or cfg.use_action_regression or cfg) and
             torch.save(action_head.state_dict(), checkpoint_dir / f"action_head--{checkpoint_name_suffix}")
 
         if cfg.use_film:
@@ -1158,7 +1198,10 @@ def finetune(cfg: FinetuneConfig) -> None:
     cfg.use_bezier_regression = (cfg.use_model == 'use_bezier_regression') 
     cfg.use_bezier_regression_onecurve = (cfg.use_model == 'use_bezier_regression_onecurve') 
     cfg.use_bezier_regression_continuous = (cfg.use_model == 'use_bezier_regression_continuous') 
-    cfg.use_rnn_regression = (cfg.use_model == 'use_rnn_regression') 
+    cfg.use_rnn_regression = (cfg.use_model == 'use_rnn_regression')
+    cfg.use_dct_regression = (cfg.use_model == 'use_dct_regression') 
+    cfg.use_action_regression = (cfg.use_model == 'use_action_regression')  
+    action_head = None
 
     # Trim trailing forward slash ('/') in VLA path if it exists
     cfg.vla_path = cfg.vla_path.rstrip("/")
@@ -1317,6 +1360,26 @@ def finetune(cfg: FinetuneConfig) -> None:
     if cfg.use_bezier_regression_continuous:
         action_head = init_module(
             Bezier_MLP_Action_continuous,
+            "mlp_rnn_action_head",
+            cfg,
+            device_id,
+            {"input_dim": vla.module.llm_dim, "action_dim": ACTION_DIM},
+            to_bf16=True,
+        )
+
+    if cfg.use_dct_regression:
+        action_head = init_module(
+            MLP_DCT_Actionhead,
+            "mlp_rnn_action_head",
+            cfg,
+            device_id,
+            {"input_dim": vla.module.llm_dim, "action_dim": ACTION_DIM},
+            to_bf16=True,
+        )
+
+    if cfg.use_action_regression:
+        action_head = init_module(
+            MLP_Action_Actionhead,
             "mlp_rnn_action_head",
             cfg,
             device_id,

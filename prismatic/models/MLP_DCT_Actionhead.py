@@ -4,7 +4,7 @@ import numpy as np
 from prismatic.vla.constants import ACTION_CHUNK_PER_CURVE, NUM_ACTIONS_CHUNK, ACTION_DIM, TOKEN_SEQUENCE_LINE,PROPRIO_DIM, STOP_INDEX, BEZIER_CURVES,Debug
 from prismatic.vla.datasets.DataProcess.BezierProcess import QuadraticBezier
 
-class Bezier_MLP_Action_continuous(nn.Module):
+class MLP_DCT_Actionhead(nn.Module):
     """
     Three-layer action decoding MLP that outputs:
       - 14 continuous float values
@@ -18,7 +18,7 @@ class Bezier_MLP_Action_continuous(nn.Module):
                  continuous_dim=ACTION_DIM * ACTION_CHUNK_PER_CURVE,
                  token_seq_len=1,
                  dropout=0.1):
-        super(Bezier_MLP_Action_continuous, self).__init__()
+        super(MLP_DCT_Actionhead, self).__init__()
 
         self.fc1 = nn.Linear(input_dim * ACTION_CHUNK_PER_CURVE, mlp_hidden_size)
         self.fc2 = nn.Linear(mlp_hidden_size, mlp_hidden_size)
@@ -75,8 +75,8 @@ class Bezier_MLP_Action_continuous(nn.Module):
         x = x.reshape(B_new * seq_len, hidden_dim * ACTION_CHUNK_PER_CURVE)  # (B*4, hidden_dim)
 
         # forward，假设 fc1 已经是 nn.Linear(hidden_dim, ...)
-        out = self.forward(x)                       # (B*(CURVES_num + 1), total_dim)
-        out = out.view(B_new, seq_len, -1)          # (B,CURVES_num + 1,total_dim)
+        out = self.forward(x)                       # (B*4, total_dim)
+        out = out.view(B_new, seq_len, -1)          # (B,4,total_dim)
 
         # 以下与原来拆控制点、长度、拼 combined 的逻辑不变
         cd = self.continuous_dim
