@@ -64,7 +64,7 @@ class MLP_Action_Actionhead(nn.Module):
         # 把 (B, seq_len, hidden_dim) 展平成 (B, seq_len*hidden_dim)
         x = actions_hidden_states.view(B, seq_len * hidden_dim)
         out = self.forward(x)               
-        out = out.view(B, seq_len, ACTION_DIM)
+        out = out.view(B, TOKEN_SEQUENCE_LINE, ACTION_DIM)
         return out
 
 
