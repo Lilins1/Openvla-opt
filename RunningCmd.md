@@ -24,3 +24,8 @@ torchrun --standalone --nnodes 1 --nproc-per-node 1 vla-scripts/finetune_RNN.py 
   --save_vla False\
   --rnn_in_batch True\
   --run_id_note Bezier1Curve_libero_acc16 
+
+
+  # cluster
+  sbatch submit.bash
+  squeue -u $USER
