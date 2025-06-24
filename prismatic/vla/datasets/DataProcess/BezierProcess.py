@@ -3,9 +3,10 @@ from prismatic.vla.constants import TOKEN_SEQUENCE_LINE
 from prismatic.vla.constants import DEBUG
 import numpy as np
 
+list_length = 500
 printflag = 0
 num_count = 0
-loss_list = np.zeros(2000, dtype=float)
+loss_list = np.zeros(list_length, dtype=float)
 loss_avg = 0.0
 
 class fitBezierToolBox:
@@ -17,9 +18,9 @@ class fitBezierToolBox:
 
     @staticmethod
     def avg_update(loss):
-        global loss_avg, num_count,loss_list
+        global loss_avg, num_count,loss_list,list_length
         loss = loss.item()  #去除计算图
-        length = 2000
+        length = list_length
         if num_count < length:
             loss_list[num_count] = loss
             num_count += 1 
@@ -29,7 +30,7 @@ class fitBezierToolBox:
             loss_list[num_count%length] = loss
             loss_avg = loss_avg + (loss-a)/length
             num_count += 1
-            if num_count == 100 * length:
+            if num_count == 1000 * length:
                 num_count = length
         return loss_avg
 
@@ -201,7 +202,7 @@ class fitBezierToolBox:
                 # feedback_factor = 1.0 + 0.5 * (loss_avg - compute_curve_loss) / (loss_avg + 1e-8)
                 
                 # 长度相关权重
-                length_weight = 1.0 + 0.1 * (1 - 2 * length_ratio)
+                length_weight = 1.0 + 0.05 * (1 - 2 * length_ratio)
                 
                 # 组合权重
                 weight = 1 + 0.05 * (feedback_factor - 1) * length_weight #基于误差平均值的正负反馈
