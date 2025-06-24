@@ -67,6 +67,6 @@ torchrun --standalone --nnodes 1 --nproc-per-node 1 vla-scripts/finetune_RNN.py 
   --shuffle_buffer_size 100000 \
   --use_model use_bezier_regression_continuous\
   --finetune_lora True\
-  --save_vla False\
+  --save_vla True\
   --rnn_in_batch True\
   --run_id_note Bezier1Curve_libero_acc16
