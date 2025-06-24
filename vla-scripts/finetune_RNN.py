@@ -635,7 +635,6 @@ def run_forward_pass(
             #     print("out_put_curves: "+str(out_put_curves))
             #     print("ground_truth_actions: "+str(ground_truth_actions))
             #     print_curve_count = 0
-            
 
             # 再传给 compute_loss
             out_put_curves_loss, ratio = BezierProcess.fitBezierToolBox.compute_loss(out_put_curves, ground_truth_actions,ACTION_DIM)
