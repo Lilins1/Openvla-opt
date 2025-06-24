@@ -7,7 +7,7 @@
 #SBATCH --gpus-per-node=A100fat:1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=12
-#SBATCH --time=150:00:00
+#SBATCH --time=100:00:00
 #SBATCH --mail-user=lruizhe@kth.se
 #SBATCH --mail-type=ALL
 #SBATCH -p alvis
