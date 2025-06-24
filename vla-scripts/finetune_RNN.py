@@ -1276,30 +1276,33 @@ def finetune(cfg: FinetuneConfig) -> None:
     # LoRA setup
     if cfg.use_lora:
         if cfg.load_Lora_path:
-            adapter_dir = Path(cfg.load_Lora_path) / "lora_adapter"
-            if not adapter_dir.exists():
-                raise FileNotFoundError(f"LoRA adapter directory not found at {adapter_dir}")
+            if cfg.load_Lora_path:
+                adapter_dir = Path(cfg.load_Lora_path) / "lora_adapter"
+                if not adapter_dir.exists():
+                    raise FileNotFoundError(f"LoRA adapter directory not found at {adapter_dir}")
 
-            # 从基模型+adapter 结构加载 PeftModel
-            peft_model = PeftModel.from_pretrained(vla, str(adapter_dir))
-            print(f"✅ Loaded existing LoRA adapter from {adapter_dir}")
+                # 1) 直接加载已有的 adapter，不做 merge
+                vla = PeftModel.from_pretrained(vla, str(adapter_dir))
+                print(f"✅ Loaded existing LoRA adapter from {adapter_dir}")
 
-            # merge & unload 会把 adapter 的权重融合到 vla 中，并卸载 adapter 结构
-            base_vla = peft_model.merge_and_unload()
-            print("🔄 Merged old adapter into base model")
+                # 2) 确保 adapter 参数开启梯度，其它参数冻结
+                for n, p in vla.named_parameters():
+                    if "lora_" in n:
+                        p.requires_grad = True
+                    else:
+                        p.requires_grad = False
 
-            # 重置 vla 为融合后的基模型
-            vla = base_vla.to(device_id)
-
-        lora_config = LoraConfig(
-            r=cfg.lora_rank,
-            lora_alpha=min(cfg.lora_rank, 16),
-            lora_dropout=cfg.lora_dropout,
-            target_modules="all-linear",
-            init_lora_weights="gaussian",
-        )
-        vla = get_peft_model(vla, lora_config)
-        vla.print_trainable_parameters()
+                vla.print_trainable_parameters()
+        else:
+            lora_config = LoraConfig(
+                r=cfg.lora_rank,
+                lora_alpha=min(cfg.lora_rank, 16),
+                lora_dropout=cfg.lora_dropout,
+                target_modules="all-linear",
+                init_lora_weights="gaussian",
+            )
+            vla = get_peft_model(vla, lora_config)
+            vla.print_trainable_parameters()
 
     # FiLM setup
     if cfg.use_film:
