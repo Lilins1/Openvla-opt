@@ -4,7 +4,7 @@
 #SBATCH --output=logs/libero_out_%j.txt
 #SBATCH --error=logs/libero_err_%j.txt
 #SBATCH --nodes=1
-#SBATCH --gpus-per-node=A100fat:1
+#SBATCH --gpus-per-node=A100:1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=12
 #SBATCH --time=100:00:00
