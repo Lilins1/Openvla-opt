@@ -461,7 +461,7 @@ def run_forward_pass(
     if use_model == 'use_bezier_regression':
         actions = pad_or_truncate(actions, (NUM_ACTIONS_CHUNK//ACTION_CHUNK_PER_CURVE) * TOKEN_SEQUENCE_LINE)
     else:
-        actions = pad_or_truncate(actions, NUM_ACTIONS_CHUNK * ACTION_DIM)
+        actions = pad_or_truncate(actions, TOKEN_SEQUENCE_LINE)
     ground_truth_actions = actions.to(device_id).to(torch.bfloat16)
 
     
