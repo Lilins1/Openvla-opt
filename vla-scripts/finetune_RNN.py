@@ -138,6 +138,7 @@ class FinetuneConfig:
     load_Lora_path: str = None
     image_aug: bool = True                           # If True, trains with image augmentations (HIGHLY RECOMMENDED)
     diffusion_sample_freq: int = 50                  # (When `use_diffusion==True`) Frequency for sampling in steps
+    save_after_steps:int = 10000
 
     # LoRA
     use_lora: bool = True                            # If True, uses LoRA fine-tuning
@@ -1275,24 +1276,30 @@ def finetune(cfg: FinetuneConfig) -> None:
     # LoRA setup
     if cfg.use_lora:
         if cfg.load_Lora_path:
-            # 恢复训练时加载保存的LoRA适配器
             adapter_dir = Path(cfg.load_Lora_path) / "lora_adapter"
             if not adapter_dir.exists():
                 raise FileNotFoundError(f"LoRA adapter directory not found at {adapter_dir}")
-            vla = PeftModel.from_pretrained(vla, str(adapter_dir))
-            print(f"✅ Loaded LoRA adapter from {adapter_dir}")
-            vla.print_trainable_parameters()
 
-        else:
-            lora_config = LoraConfig(
-                r=cfg.lora_rank,
-                lora_alpha=min(cfg.lora_rank, 16),
-                lora_dropout=cfg.lora_dropout,
-                target_modules="all-linear",
-                init_lora_weights="gaussian",
-            )
-            vla = get_peft_model(vla, lora_config)
-            vla.print_trainable_parameters()
+            # 从基模型+adapter 结构加载 PeftModel
+            peft_model = PeftModel.from_pretrained(vla, str(adapter_dir))
+            print(f"✅ Loaded existing LoRA adapter from {adapter_dir}")
+
+            # merge & unload 会把 adapter 的权重融合到 vla 中，并卸载 adapter 结构
+            base_vla = peft_model.merge_and_unload()
+            print("🔄 Merged old adapter into base model")
+
+            # 重置 vla 为融合后的基模型
+            vla = base_vla.to(device_id)
+
+        lora_config = LoraConfig(
+            r=cfg.lora_rank,
+            lora_alpha=min(cfg.lora_rank, 16),
+            lora_dropout=cfg.lora_dropout,
+            target_modules="all-linear",
+            init_lora_weights="gaussian",
+        )
+        vla = get_peft_model(vla, lora_config)
+        vla.print_trainable_parameters()
 
     # FiLM setup
     if cfg.use_film:
@@ -1664,7 +1671,7 @@ def finetune(cfg: FinetuneConfig) -> None:
                 progress.update()
 
             # Save model checkpoint: either keep latest checkpoint only or all checkpoints
-            if gradient_step_idx > 0 and log_step % cfg.save_freq == 0:
+            if gradient_step_idx > 0 and log_step % cfg.save_freq == 0 and log_step >= cfg.save_after_steps :
                 save_training_checkpoint(
                     cfg=cfg,
                     run_dir=run_dir,
