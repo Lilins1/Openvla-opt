@@ -135,6 +135,7 @@ class FinetuneConfig:
                                                      #   (If False, saves all checkpoints)
     resume: bool = False                             # If True, resumes from checkpoint
     resume_step: Optional[int] = None                # (When `resume==True`) Step number that we are resuming from
+    load_Lora_path: str = None
     image_aug: bool = True                           # If True, trains with image augmentations (HIGHLY RECOMMENDED)
     diffusion_sample_freq: int = 50                  # (When `use_diffusion==True`) Frequency for sampling in steps
 
@@ -461,11 +462,8 @@ def run_forward_pass(
     if use_model == 'use_bezier_regression':
         actions = pad_or_truncate(actions, (NUM_ACTIONS_CHUNK//ACTION_CHUNK_PER_CURVE) * TOKEN_SEQUENCE_LINE)
     else:
-        actions = pad_or_truncate(actions, TOKEN_SEQUENCE_LINE)
+        actions = pad_or_truncate(actions, ACTION_LENGTH)
     ground_truth_actions = actions.to(device_id).to(torch.bfloat16)
-
-    
-
 
     # [Only for diffusion] Sample noisy actions used as input for noise predictor network
     if use_model == 'use_diffusion':
@@ -1276,15 +1274,25 @@ def finetune(cfg: FinetuneConfig) -> None:
 
     # LoRA setup
     if cfg.use_lora:
-        lora_config = LoraConfig(
-            r=cfg.lora_rank,
-            lora_alpha=min(cfg.lora_rank, 16),
-            lora_dropout=cfg.lora_dropout,
-            target_modules="all-linear",
-            init_lora_weights="gaussian",
-        )
-        vla = get_peft_model(vla, lora_config)
-        vla.print_trainable_parameters()
+        if cfg.load_Lora_path:
+            # 恢复训练时加载保存的LoRA适配器
+            adapter_dir = Path(cfg.load_Lora_path) / "lora_adapter"
+            if not adapter_dir.exists():
+                raise FileNotFoundError(f"LoRA adapter directory not found at {adapter_dir}")
+            vla = PeftModel.from_pretrained(vla, str(adapter_dir))
+            print(f"✅ Loaded LoRA adapter from {adapter_dir}")
+            vla.print_trainable_parameters()
+
+        else:
+            lora_config = LoraConfig(
+                r=cfg.lora_rank,
+                lora_alpha=min(cfg.lora_rank, 16),
+                lora_dropout=cfg.lora_dropout,
+                target_modules="all-linear",
+                init_lora_weights="gaussian",
+            )
+            vla = get_peft_model(vla, lora_config)
+            vla.print_trainable_parameters()
 
     # FiLM setup
     if cfg.use_film:
