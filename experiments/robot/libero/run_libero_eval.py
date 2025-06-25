@@ -90,7 +90,15 @@ class GenerateConfig:
 
     use_l1_regression: bool = False               # If True, uses continuous action head with L1 regression objective
     use_diffusion: bool = False                      # If True, uses continuous action head with diffusion modeling objective (DDIM)
-    use_rnn_regression: bool = True
+    use_rnn_regression: bool = False
+    use_bezier_regression: bool = False
+    use_bezier_regression_onecurve:bool = False
+    use_bezier_regression_continuous:bool = False
+    use_dct_regression:bool = False
+    use_action_regression:bool = False
+
+    use_actionhead:bool = True
+
     num_diffusion_steps: int = 50                    # (When `diffusion==True`) Number of diffusion steps for inference
     use_film: bool = False                           # If True, uses FiLM to infuse language inputs into visual features
     num_images_in_input: int = 2                     # Number of images in the VLA input (default: 1)
@@ -157,7 +165,7 @@ def initialize_model(cfg: GenerateConfig):
 
     # Load action head if needed
     action_head = None
-    if cfg.use_l1_regression or cfg.use_diffusion or cfg.use_rnn_regression:
+    if cfg.use_actionhead:
         action_head = get_action_head(cfg, model.llm_dim)
 
     # Load noisy action projector if using diffusion

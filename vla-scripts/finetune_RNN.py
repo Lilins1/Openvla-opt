@@ -529,7 +529,7 @@ def run_forward_pass(
 
 
     if use_model == 'use_bezier_regression':
-        token_padding_length = NUM_ACTIONS_CHUNK
+        token_padding_length = NUM_ACTIONS_CHUNK  # if use openvla-oft 8*7 
         batch["labels"], batch["input_ids"], batch["attention_mask"] = trim_batch_after_eos(batch["labels"], batch["input_ids"], batch["attention_mask"],token_padding_length)
         Debug("in labels: " + str(batch["labels"]))
         Debug("in input_ids: " + str(batch["input_ids"]))
