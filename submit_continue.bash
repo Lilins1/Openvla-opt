@@ -65,8 +65,8 @@ torchrun --standalone --nnodes 1 --nproc-per-node 1 vla-scripts/finetune_RNN.py 
   --wandb_project vla-libero-Bezierfit \
   --wandb_entity chu2002-kth-royal-institute-of-technology \
   --shuffle_buffer_size 100000 \
-  --use_model use_bezier_regression_continuous\
+  --use_model use_action_regression\
   --finetune_lora True\
   --save_vla True\
   --rnn_in_batch True\
-  --run_id_note action8chunk_libero_acc16
+  --run_id_note action8chunk_libero_acc16_continue
