@@ -33,4 +33,4 @@ cd /mimer/NOBACKUP/groups/naiss2024-5-164/Ruizhe/OPENVLA/Openvla-opt
 sbatch submit.bash
 squeue -u $USER
 
-acancel 4678322
+scancel 4678322
