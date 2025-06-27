@@ -30,6 +30,7 @@ torchrun --standalone --nnodes 1 --nproc-per-node 1 vla-scripts/finetune_RNN.py 
 
 cd /mimer/NOBACKUP/groups/naiss2024-5-164/Ruizhe/OPENVLA/Openvla-opt
 
+git pull
 sbatch submit.bash
 squeue -u $USER
 

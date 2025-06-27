@@ -44,7 +44,7 @@ nvidia-smi
 # Run your training script
 # -------------------------------
 python experiments/robot/libero/run_libero_eval.py \
---pretrained_checkpoint /mimer/NOBACKUP/groups/naiss2024-5-164/Ruizhe/OPENVLA/rnn_model/action/libero/lora_train/openvla-7b+libero_spatial_no_noops+b16+lr-0.0005+lora-r128+dropout-0.0--image_aug--action8chunk_libero_acc16--10000_chkpt \
+--pretrained_checkpoint /mimer/NOBACKUP/groups/naiss2024-5-164/Ruizhe/OPENVLA/rnn_model/action/libero/lora_train/openvla-7b+libero_spatial_no_noops+b16+lr-0.0005+lora-r128+dropout-0.0--image_aug--action8chunk_libero_acc16--80000_chkpt \
 --task_suite_name libero_spatial
 
 # python experiments/robot/libero/run_libero_eval.py \
