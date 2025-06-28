@@ -22,6 +22,7 @@ from transformers import AutoConfig, AutoImageProcessor, AutoModelForVision2Seq,
 json_numpy.patch()
 
 from prismatic.models.MLP_RNN_action import MLP_RNN_ActionHead
+from prismatic.models.MLP_Action_Actionhead import MLP_Action_Actionhead
 
 from prismatic.extern.hf.configuration_prismatic import OpenVLAConfig
 from prismatic.extern.hf.modeling_prismatic import OpenVLAForActionPrediction
@@ -487,6 +488,8 @@ def get_action_head(cfg: Any, llm_dim: int) -> Union[L1RegressionActionHead, Dif
         )
     elif cfg.use_rnn_regression:
         action_head = MLP_RNN_ActionHead(input_dim=llm_dim, action_dim=ACTION_DIM)
+    elif cfg.use_action_regression:
+        action_head = MLP_Action_Actionhead(input_dim=llm_dim, action_dim=ACTION_DIM)
     else:
         raise ValueError("Either use_l1_regression or use_diffusion must be True")
 
