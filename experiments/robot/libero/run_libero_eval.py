@@ -95,7 +95,7 @@ class GenerateConfig:
     use_bezier_regression_onecurve:bool = False
     use_bezier_regression_continuous:bool = False
     use_dct_regression:bool = False
-    use_action_regression:bool = False
+    use_action_regression:bool = True
 
     use_actionhead:bool = True
 
